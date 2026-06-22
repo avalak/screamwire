@@ -7,6 +7,7 @@ mod cli;
 mod config;
 mod pw;
 mod scream;
+mod vad;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
@@ -21,7 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cfg.apply_cli_overrides(&cli);
 
     info!("ScreamWire sender starting...");
-    info!("Multicast target: {}", cfg.target_addr);
 
     let buffer_size = scream::PACKET_SIZE * cfg.ring_buffer_packets;
     let rb = HeapRb::<u8>::new(buffer_size);
@@ -29,7 +29,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
-    let _sender_thread = thread::spawn(move || scream::send_loop(consumer, target_addr, bind_addr));
+
+    // Start sender thread
+    let _sender_thread = thread::spawn(move || {
+        scream::send_loop(
+            consumer,
+            target_addr,
+            bind_addr,
+            cfg.vad_threshold,
+            cfg.silence_packets,
+        )
+    });
 
     pw::run_virtual_sink(producer, cfg.rate, cfg.channels)?;
 

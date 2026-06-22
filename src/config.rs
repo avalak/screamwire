@@ -16,6 +16,13 @@ pub struct Config {
     #[serde(default = "default_channels")]
     pub channels: u32,
 
+    // VAD (Voice Activity Detection)
+    #[serde(default = "default_vad_threshold")]
+    pub vad_threshold: u16,
+
+    #[serde(default = "default_silence_packets")]
+    pub silence_packets: u32,
+
     // Ring buffer
     #[serde(default = "default_ring_buffer_packets")]
     pub ring_buffer_packets: usize,
@@ -37,7 +44,19 @@ fn default_channels() -> u32 {
     crate::scream::CHANNELS
 }
 
-// Ring buffer size (number of packets, ~60 ms buffering)
+fn default_vad_threshold() -> u16 {
+    // 0 = VAD disabled, continuous transmission.
+    // 1 = wake on any non‑zero sample (complete digital silence is 0).
+    // Increase to ignore low-level background noise (e.g., 50-200).
+    1
+}
+
+fn default_silence_packets() -> u32 {
+    // 1 second of silence = ceil(RATE / (AUDIO_PAYLOAD_SIZE / FRAME_BYTES))
+    // 48000 / (1152 / 4) = 48000 / 288 = 166.67 -> 167 packets
+    167
+}
+
 fn default_ring_buffer_packets() -> usize {
     10
 }
@@ -57,6 +76,8 @@ impl Config {
                 sender_bind_addr: default_sender_bind_addr(),
                 rate: default_rate(),
                 channels: default_channels(),
+                vad_threshold: default_vad_threshold(),
+                silence_packets: default_silence_packets(),
                 ring_buffer_packets: default_ring_buffer_packets(),
             })
         }
