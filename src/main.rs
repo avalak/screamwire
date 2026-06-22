@@ -1,30 +1,37 @@
+use clap::Parser;
+use log::{debug, info};
 use ringbuf::{HeapRb, traits::Split};
 use std::thread;
 
+mod cli;
+mod config;
 mod pw;
 mod scream;
 
-const MULTICAST_ADDR: &str = "239.255.77.77:4010";
-const SENDER_BIND_ADDR: &str = "0.0.0.0:0";
-
-// Ring buffer size (number of packets, ~60 ms buffering)
-const RING_BUFFER_PACKETS: usize = 10;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("ScreamWire sender starting...");
-    println!("Multicast target: {}", MULTICAST_ADDR);
+    let cli = cli::Cli::parse();
 
-    // Ring buffer
-    let rb = HeapRb::<u8>::new(scream::PACKET_SIZE * RING_BUFFER_PACKETS);
+    // Initialize logger
+    let log_level = if cli.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    debug!("Verbose mode enabled");
+
+    let mut cfg = config::Config::load(&cli)?;
+    cfg.apply_cli_overrides(&cli);
+
+    info!("ScreamWire sender starting...");
+    info!("Multicast target: {}", cfg.target_addr);
+
+    let buffer_size = scream::PACKET_SIZE * cfg.ring_buffer_packets;
+    let rb = HeapRb::<u8>::new(buffer_size);
     let (producer, consumer) = rb.split();
 
-    // Start sender thread
-    let target_addr: std::net::SocketAddr = MULTICAST_ADDR.parse()?;
-    let bind_addr: std::net::SocketAddr = SENDER_BIND_ADDR.parse()?;
+    let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
+    let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
     let _sender_thread = thread::spawn(move || scream::send_loop(consumer, target_addr, bind_addr));
 
-    // Run PipeWire virtual sink (blocks until exit)
-    pw::run_virtual_sink(producer, scream::RATE, scream::CHANNELS)?;
+    pw::run_virtual_sink(producer, cfg.rate, cfg.channels)?;
 
     Ok(())
 }

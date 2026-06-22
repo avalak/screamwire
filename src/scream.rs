@@ -1,3 +1,4 @@
+use log::error;
 use ringbuf::{
     HeapCons,
     traits::{Consumer, Observer},
@@ -39,7 +40,7 @@ pub fn send_loop(
             }
 
             if let Err(e) = socket.send_to(&packet, target) {
-                eprintln!("UDP send error: {}", e);
+                error!("UDP send error: {}", e);
             }
 
             consumer.skip(AUDIO_PAYLOAD_SIZE);

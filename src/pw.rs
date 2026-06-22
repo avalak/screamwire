@@ -1,3 +1,4 @@
+use log::info;
 use pipewire::{
     context::ContextRc,
     main_loop::MainLoopRc,
@@ -57,7 +58,7 @@ pub fn run_virtual_sink(
         })
         .state_changed(move |_stream, _user_data, _old, new| {
             if new == pipewire::stream::StreamState::Streaming {
-                println!("ScreamWire sink is now streaming");
+                info!("ScreamWire sink is now streaming");
             }
         })
         .register()?;
@@ -69,7 +70,7 @@ pub fn run_virtual_sink(
         &mut sink_params[..],
     )?;
 
-    println!("Initialized. Send audio to 'ScreamWire Sender' device.");
+    info!("Initialized. Send audio to 'ScreamWire Sender' device.");
     mainloop.run();
 
     Ok(())
