@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     // Network
     #[serde(default = "default_target_addr")]
@@ -83,7 +83,7 @@ fn default_idle_sleep_ms() -> u64 {
 
 /// Return the default configuration file path (`$XDG_CONFIG_HOME/screamwire/config.toml`
 /// or `~/.config/screamwire/config.toml`) if the file exists, otherwise `None`.
-fn default_config_path() -> Option<PathBuf> {
+pub fn default_config_path() -> Option<PathBuf> {
     let base = if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         PathBuf::from(dir)
     } else if let Ok(home) = std::env::var("HOME") {
@@ -156,6 +156,39 @@ impl Config {
         }
         if let Some(ref sink) = cli.sink {
             self.sink_name = Some(sink.clone());
+        }
+    }
+
+    /// Write a default configuration file to the given path.
+    pub fn generate_default(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        if path.exists() {
+            return Err(format!("File already exists: {}", path.display()).into());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
+        }
+        let default_config = Self::default_config();
+        let toml_string = toml::to_string_pretty(&default_config)
+            .map_err(|e| format!("Failed to serialize default config: {}", e))?;
+        std::fs::write(path, toml_string)
+            .map_err(|e| format!("Failed to write config to '{}': {}", path.display(), e))?;
+        println!("Default configuration written to {}", path.display());
+        Ok(())
+    }
+
+    fn default_config() -> Self {
+        Config {
+            target_addr: default_target_addr(),
+            sender_bind_addr: default_sender_bind_addr(),
+            rate: default_rate(),
+            channels: default_channels(),
+            vad_threshold: default_vad_threshold(),
+            silence_packets: default_silence_packets(),
+            ring_buffer_packets: default_ring_buffer_packets(),
+            active_sleep_ms: default_active_sleep_ms(),
+            idle_sleep_ms: default_idle_sleep_ms(),
+            sink_name: None,
         }
     }
 }

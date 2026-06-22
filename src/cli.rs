@@ -54,4 +54,8 @@ pub struct Cli {
     /// list all sinks
     #[arg(long)]
     pub list_sinks: bool,
+
+    /// Generate a default configuration file at ~/.config/screamwire/config.toml and exit
+    #[arg(long)]
+    pub generate_config: bool,
 }

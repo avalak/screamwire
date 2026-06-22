@@ -36,6 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if cli.generate_config {
+        let config_path = config::default_config_path().unwrap_or_else(|| {
+            let home = std::env::var("HOME").expect("HOME not set");
+            std::path::PathBuf::from(home).join(".config/screamwire/config.toml")
+        });
+        config::Config::generate_default(&config_path)?;
+        return Ok(());
+    }
+
     info!("ScreamWire sender starting...");
 
     // Create the ring buffer and start the network sender thread
