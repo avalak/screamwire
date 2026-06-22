@@ -21,8 +21,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfg = config::Config::load(&cli)?;
     cfg.apply_cli_overrides(&cli);
 
+    // Retrieve the list of available sinks
+    let available_sinks = pw::get_sink_names();
+
+    if cli.list_sinks {
+        if available_sinks.is_empty() {
+            println!("No audio sinks found.");
+        } else {
+            println!("Available audio sinks:");
+            for name in available_sinks {
+                println!("  - {}", name);
+            }
+        }
+        return Ok(());
+    }
+
     info!("ScreamWire sender starting...");
 
+    // Create the ring buffer and start the network sender thread
     let buffer_size = scream::PACKET_SIZE * cfg.ring_buffer_packets;
     let rb = HeapRb::<u8>::new(buffer_size);
     let (producer, consumer) = rb.split();
@@ -30,20 +46,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
 
+    let vad_threshold = cfg.vad_threshold;
+    let silence_packets = cfg.silence_packets;
+    let active_sleep_ms = cfg.active_sleep_ms;
+    let idle_sleep_ms = cfg.idle_sleep_ms;
+
     // Start sender thread
     let _sender_thread = thread::spawn(move || {
         scream::send_loop(
             consumer,
             target_addr,
             bind_addr,
-            cfg.vad_threshold,
-            cfg.silence_packets,
-            cfg.active_sleep_ms,
-            cfg.idle_sleep_ms,
+            vad_threshold,
+            silence_packets,
+            active_sleep_ms,
+            idle_sleep_ms,
         )
     });
 
-    pw::run_virtual_sink(producer, cfg.rate, cfg.channels)?;
+    // Determine the mode and launch the audio stream
+    let sink_name = cfg.sink_name.clone();
+    if let Some(ref name) = sink_name
+        && !name.is_empty()
+    {
+        if !available_sinks.contains(name) {
+            eprintln!(
+                "Error: sink '{}' not found. Use --list-sinks to see available names.",
+                name
+            );
+            std::process::exit(1);
+        }
+        info!("Using existing sink: {}", name);
+        pw::run_audio_stream(producer, cfg.rate, cfg.channels, Some(name.clone()))?;
+    } else {
+        pw::run_audio_stream(producer, cfg.rate, cfg.channels, None)?;
+    }
 
     Ok(())
 }

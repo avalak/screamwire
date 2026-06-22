@@ -46,4 +46,12 @@ pub struct Cli {
     /// Sleep duration in ms when VAD has paused transmission (default: 30)
     #[arg(long)]
     pub idle_sleep_ms: Option<u64>,
+
+    /// Name of an existing sink to capture from (instead of creating a virtual sink)
+    #[arg(long)]
+    pub sink: Option<String>,
+
+    /// list all sinks
+    #[arg(long)]
+    pub list_sinks: bool,
 }

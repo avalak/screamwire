@@ -33,6 +33,10 @@ pub struct Config {
 
     #[serde(default = "default_idle_sleep_ms")]
     pub idle_sleep_ms: u64,
+
+    // Existing sink capture (optional)
+    #[serde(default)]
+    pub sink_name: Option<String>,
 }
 
 fn default_target_addr() -> String {
@@ -96,6 +100,7 @@ impl Config {
                 ring_buffer_packets: default_ring_buffer_packets(),
                 active_sleep_ms: default_active_sleep_ms(),
                 idle_sleep_ms: default_idle_sleep_ms(),
+                sink_name: None,
             })
         }
     }
@@ -128,6 +133,9 @@ impl Config {
         }
         if let Some(idle) = cli.idle_sleep_ms {
             self.idle_sleep_ms = idle;
+        }
+        if let Some(ref sink) = cli.sink {
+            self.sink_name = Some(sink.clone());
         }
     }
 }

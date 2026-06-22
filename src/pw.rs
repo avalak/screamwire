@@ -1,76 +1,163 @@
 use log::info;
 use pipewire::{
     context::ContextRc,
+    init,
     main_loop::MainLoopRc,
     properties::properties,
     spa,
     stream::{StreamFlags, StreamRc},
+    types::ObjectType,
 };
 use ringbuf::traits::Producer;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-/// Virtual sink that feeds audio into the given ring buffer producer.
-/// The function blocks until the main loop exits.
-pub fn run_virtual_sink(
+/// Return a list of all `node.name` values for PipeWire nodes with
+/// `media.class = "Audio/Sink"`.
+pub fn get_sink_names() -> Vec<String> {
+    init();
+
+    let mainloop = MainLoopRc::new(None).expect("Failed to create main loop");
+    let context = ContextRc::new(&mainloop, None).expect("Failed to create context");
+    let core = context.connect_rc(None).expect("Failed to connect to core");
+    let registry = core.get_registry().expect("Failed to get registry");
+
+    // Shared vector wrapped in Rc<RefCell<…>> because it is written from
+    // the registry callback and read after the loop.
+    let sinks = Rc::new(RefCell::new(Vec::new()));
+    let sinks_clone = sinks.clone();
+
+    // Listen for global objects – collect every Audio/Sink that appears.
+    let registry_listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            if global.type_ == ObjectType::Node
+                && let Some(props) = global.props
+                && props.get("media.class") == Some("Audio/Sink")
+            {
+                let name = props.get("node.name").unwrap_or("Unknown").to_string();
+                sinks_clone.borrow_mut().push(name);
+            }
+        })
+        .register();
+
+    // Request synchronisation and keep the returned sequence number.
+    let sync_seq = core.sync(0).expect("Failed to sync core");
+
+    // When the server has processed our sync request it will emit a `done`
+    // event with the same sequence number -> we can quit the loop.
+    let mainloop_clone = mainloop.clone();
+    let core_listener = core
+        .add_listener_local()
+        .done(move |id, seq| {
+            if id == pipewire::core::PW_ID_CORE && seq == sync_seq {
+                mainloop_clone.quit();
+            }
+        })
+        .register();
+
+    mainloop.run();
+
+    // Keep the listeners alive until here.
+    drop(registry_listener);
+    drop(core_listener);
+
+    // Extract the vector – the Rc and RefCell are no longer needed.
+    Rc::into_inner(sinks)
+        .expect("There are remaining Rc references")
+        .into_inner()
+}
+
+/// Universal audio stream runner.
+///
+/// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
+/// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
+pub fn run_audio_stream(
     mut producer: impl Producer<Item = u8> + Send + 'static,
     rate: u32,
     channels: u32,
+    target_sink: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    pipewire::init();
+    init();
 
     let mainloop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
 
-    let sink_props = properties! {
-        *pipewire::keys::MEDIA_TYPE => "Audio",
-        *pipewire::keys::MEDIA_CATEGORY => "Playback",
-        *pipewire::keys::MEDIA_ROLE => "Music",
-        *pipewire::keys::NODE_NAME => "ScreamWire",
-        *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Sender",
-        *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
-        *pipewire::keys::NODE_VIRTUAL => "true",
-        // Application identity
-        *pipewire::keys::APP_NAME => "ScreamWire",
-        *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
-        *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
+    // SPA format pod (S16LE)
+    let pod_data = make_format_data(rate, channels);
+    let pod = pipewire::spa::pod::Pod::from_bytes(&pod_data).unwrap();
+    let mut params = [pod];
+
+    // Configure properties and flags based on mode
+    let (props, flags, log_desc) = if let Some(ref sink_name) = target_sink {
+        info!("Capture mode: using monitor of sink '{}'", sink_name);
+        (
+            properties! {
+                *pipewire::keys::CLIENT_NAME => "ScreamWire",
+                *pipewire::keys::MEDIA_NAME => "Capture audio",
+                *pipewire::keys::MEDIA_TYPE => "Audio",
+                *pipewire::keys::MEDIA_CATEGORY => "Manager", //"Capture",
+                *pipewire::keys::MEDIA_ROLE => "Production",
+                *pipewire::keys::STREAM_CAPTURE_SINK => "true",
+                *pipewire::keys::TARGET_OBJECT => sink_name.as_str(),
+                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Sender",
+                *pipewire::keys::APP_ICON_NAME => "audio-speakers",
+                *pipewire::keys::APP_NAME => "ScreamWire",
+                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
+                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
+            },
+            StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
+            format!("capture from '{}'", sink_name),
+        )
+    } else {
+        info!("Virtual mode: creating 'ScreamWire' output device");
+        (
+            properties! {
+                *pipewire::keys::MEDIA_TYPE => "Audio",
+                *pipewire::keys::MEDIA_CATEGORY => "Playback",
+                *pipewire::keys::MEDIA_ROLE => "Production",
+                *pipewire::keys::NODE_NAME => "ScreamWire",
+                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Remote Output",
+                *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
+                *pipewire::keys::NODE_VIRTUAL => "true",
+
+                *pipewire::keys::APP_NAME => "ScreamWire",
+                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
+                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
+            },
+            StreamFlags::MAP_BUFFERS,
+            "virtual sink 'ScreamWire'".to_string(),
+        )
     };
 
-    let sink_stream = StreamRc::new(core, "screamwire-sink", sink_props)?;
-    let sink_pod_data = make_format_data(rate, channels);
-    let sink_pod = pipewire::spa::pod::Pod::from_bytes(&sink_pod_data).unwrap();
-    let mut sink_params = [sink_pod];
-
-    let _sink_listener = sink_stream
-        .add_local_listener()
-        .process(move |stream, _user_data: &mut ()| {
-            if let Some(mut pw_buffer) = stream.dequeue_buffer() {
-                let datas = pw_buffer.datas_mut();
+    let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
+    let log_desc_for_closure = log_desc.clone();
+    let _listener = stream
+        .add_local_listener::<()>()
+        .process(move |s, _| {
+            if let Some(mut buf) = s.dequeue_buffer() {
+                let datas = buf.datas_mut();
                 if let Some(data) = datas.first_mut() {
                     let chunk = data.chunk();
-                    let offset = chunk.offset() as usize;
-                    let size = chunk.size() as usize;
-                    if let Some(buf) = data.data() {
-                        let audio_bytes = &buf[offset..offset + size];
-                        let _ = producer.push_slice(audio_bytes);
+                    let off = chunk.offset() as usize;
+                    let sz = chunk.size() as usize;
+                    if let Some(bytes) = data.data() {
+                        let _ = producer.push_slice(&bytes[off..off + sz]);
                     }
                 }
             }
         })
         .state_changed(move |_stream, _user_data, _old, new| {
             if new == pipewire::stream::StreamState::Streaming {
-                info!("ScreamWire sink is now streaming");
+                info!("Stream started ({})", log_desc_for_closure);
             }
         })
         .register()?;
 
-    sink_stream.connect(
-        spa::utils::Direction::Input,
-        None,
-        StreamFlags::MAP_BUFFERS,
-        &mut sink_params[..],
-    )?;
+    stream.connect(spa::utils::Direction::Input, None, flags, &mut params[..])?;
 
-    info!("Initialized. Send audio to 'ScreamWire Sender' device.");
+    info!("Initialized: {}", log_desc);
     mainloop.run();
 
     Ok(())
