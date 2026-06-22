@@ -7,21 +7,11 @@ use pipewire::{
 };
 use ringbuf::{
     HeapRb,
-    traits::{Consumer, Observer, Producer, Split},
+    traits::{Producer, Split},
 };
-use std::net::UdpSocket;
 use std::thread;
-use std::time::Duration;
 
-// ---- ScreamWire protocol constants ----
-const RATE: u32 = 48000;
-const CHANNELS: u32 = 2;
-
-const HEADER_SIZE: usize = 5;
-const AUDIO_PAYLOAD_SIZE: usize = 1152;
-const PACKET_SIZE: usize = HEADER_SIZE + AUDIO_PAYLOAD_SIZE;
-
-const HEADER: [u8; HEADER_SIZE] = [0x01, 0x10, 0x02, 0x03, 0x00];
+mod scream;
 
 const MULTICAST_ADDR: &str = "239.255.77.77:4010";
 const SENDER_BIND_ADDR: &str = "0.0.0.0:0";
@@ -72,47 +62,18 @@ fn make_format_data(rate: u32, channels: u32) -> Vec<u8> {
     .into_inner()
 }
 
-// ---- Network sender thread ----
-fn send_loop(mut consumer: ringbuf::HeapCons<u8>, target: std::net::SocketAddr) {
-    let socket = UdpSocket::bind(SENDER_BIND_ADDR).expect("Failed to bind UDP socket");
-    let mut packet = [0u8; PACKET_SIZE];
-    packet[..HEADER_SIZE].copy_from_slice(&HEADER);
-
-    loop {
-        if consumer.occupied_len() >= AUDIO_PAYLOAD_SIZE {
-            let (slice1, slice2) = consumer.as_slices();
-            if slice1.len() >= AUDIO_PAYLOAD_SIZE {
-                packet[HEADER_SIZE..].copy_from_slice(&slice1[..AUDIO_PAYLOAD_SIZE]);
-            } else {
-                let first = slice1.len();
-                packet[HEADER_SIZE..HEADER_SIZE + first].copy_from_slice(slice1);
-                let remaining = AUDIO_PAYLOAD_SIZE - first;
-                packet[HEADER_SIZE + first..].copy_from_slice(&slice2[..remaining]);
-            }
-
-            if let Err(e) = socket.send_to(&packet, target) {
-                eprintln!("UDP send error: {}", e);
-            }
-
-            consumer.skip(AUDIO_PAYLOAD_SIZE);
-        } else {
-            // Polling interval
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ScreamWire sender starting...");
     println!("Multicast target: {}", MULTICAST_ADDR);
 
     // Ring buffer
-    let rb = HeapRb::<u8>::new(PACKET_SIZE * RING_BUFFER_PACKETS);
+    let rb = HeapRb::<u8>::new(scream::PACKET_SIZE * RING_BUFFER_PACKETS);
     let (mut producer, consumer) = rb.split();
 
     // Start sender thread
     let target_addr: std::net::SocketAddr = MULTICAST_ADDR.parse()?;
-    let _sender_thread = thread::spawn(move || send_loop(consumer, target_addr));
+    let bind_addr: std::net::SocketAddr = SENDER_BIND_ADDR.parse()?;
+    let _sender_thread = thread::spawn(move || scream::send_loop(consumer, target_addr, bind_addr));
 
     // Set up PipeWire
     pipewire::init();
@@ -137,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let sink_stream = StreamRc::new(core, "screamwire-sink", sink_props)?;
-    let sink_pod_data = make_format_data(RATE, CHANNELS);
+    let sink_pod_data = make_format_data(scream::RATE, scream::CHANNELS);
     let sink_pod = pipewire::spa::pod::Pod::from_bytes(&sink_pod_data).unwrap();
     let mut sink_params = [sink_pod];
 
