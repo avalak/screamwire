@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -80,14 +81,33 @@ fn default_idle_sleep_ms() -> u64 {
     30
 }
 
+/// Return the default configuration file path (`$XDG_CONFIG_HOME/screamwire/config.toml`
+/// or `~/.config/screamwire/config.toml`) if the file exists, otherwise `None`.
+fn default_config_path() -> Option<PathBuf> {
+    let base = if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(dir)
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config")
+    } else {
+        return None; // cannot determine config directory
+    };
+    let path = base.join("screamwire").join("config.toml");
+    if path.exists() { Some(path) } else { None }
+}
+
 impl Config {
-    /// Load configuration from a file, or return defaults if no path is given.
+    /// Load configuration from a file, falling back to the default XDG path or hardcoded defaults.
     pub fn load(cli: &super::cli::Cli) -> Result<Self, Box<dyn std::error::Error>> {
-        if let Some(ref path) = cli.config {
-            let content = std::fs::read_to_string(path)
-                .map_err(|e| format!("cannot read config '{}': {}", path, e))?;
+        let explicit_path = cli.config.as_deref();
+        let config_path = explicit_path
+            .map(PathBuf::from)
+            .or_else(default_config_path);
+
+        if let Some(path) = config_path {
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read config '{}': {}", path.display(), e))?;
             let cfg: Config = toml::from_str(&content)
-                .map_err(|e| format!("invalid config '{}': {}", path, e))?;
+                .map_err(|e| format!("invalid config '{}': {}", path.display(), e))?;
             Ok(cfg)
         } else {
             Ok(Config {
