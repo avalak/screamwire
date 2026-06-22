@@ -21,7 +21,12 @@ pub struct Vad {
 }
 
 impl Vad {
-    pub fn new(threshold: u16, silence_packets: u32) -> Self {
+    pub fn new(
+        threshold: u16,
+        silence_packets: u32,
+        active_sleep_ms: u64,
+        idle_sleep_ms: u64,
+    ) -> Self {
         let enabled = threshold > 0 && silence_packets > 0;
 
         // Calculate packet and silence duration for logging
@@ -46,9 +51,9 @@ impl Vad {
             silence_packets,
             active: true,
             silent_count: 0,
-            active_sleep_ms: 4,
-            idle_sleep_ms: 30,
-            sleep_ms: 4,
+            active_sleep_ms,
+            idle_sleep_ms,
+            sleep_ms: active_sleep_ms,
         }
     }
 

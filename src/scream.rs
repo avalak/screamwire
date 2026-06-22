@@ -28,8 +28,15 @@ pub fn send_loop(
     bind_addr: std::net::SocketAddr,
     vad_threshold: u16,
     silence_packets: u32,
+    active_sleep_ms: u64,
+    idle_sleep_ms: u64,
 ) {
-    let mut vad = Vad::new(vad_threshold, silence_packets);
+    let mut vad = Vad::new(
+        vad_threshold,
+        silence_packets,
+        active_sleep_ms,
+        idle_sleep_ms,
+    );
     let socket = UdpSocket::bind(bind_addr).expect("Failed to bind UDP socket");
 
     info!("Multicast target: {}, sender bind: {}", target, bind_addr);

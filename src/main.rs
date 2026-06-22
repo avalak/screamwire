@@ -38,6 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             bind_addr,
             cfg.vad_threshold,
             cfg.silence_packets,
+            cfg.active_sleep_ms,
+            cfg.idle_sleep_ms,
         )
     });
 

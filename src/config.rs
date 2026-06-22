@@ -26,6 +26,13 @@ pub struct Config {
     // Ring buffer
     #[serde(default = "default_ring_buffer_packets")]
     pub ring_buffer_packets: usize,
+
+    // Sleep intervals (milliseconds)
+    #[serde(default = "default_active_sleep_ms")]
+    pub active_sleep_ms: u64,
+
+    #[serde(default = "default_idle_sleep_ms")]
+    pub idle_sleep_ms: u64,
 }
 
 fn default_target_addr() -> String {
@@ -61,6 +68,14 @@ fn default_ring_buffer_packets() -> usize {
     10
 }
 
+fn default_active_sleep_ms() -> u64 {
+    4
+}
+
+fn default_idle_sleep_ms() -> u64 {
+    30
+}
+
 impl Config {
     /// Load configuration from a file, or return defaults if no path is given.
     pub fn load(cli: &super::cli::Cli) -> Result<Self, Box<dyn std::error::Error>> {
@@ -79,14 +94,40 @@ impl Config {
                 vad_threshold: default_vad_threshold(),
                 silence_packets: default_silence_packets(),
                 ring_buffer_packets: default_ring_buffer_packets(),
+                active_sleep_ms: default_active_sleep_ms(),
+                idle_sleep_ms: default_idle_sleep_ms(),
             })
         }
     }
 
     /// Override configuration fields with explicit CLI arguments.
     pub fn apply_cli_overrides(&mut self, cli: &super::cli::Cli) {
-        if let Some(ref bind_addr) = cli.sender_bind_addr {
-            self.sender_bind_addr = bind_addr.clone();
+        if let Some(ref addr) = cli.target_addr {
+            self.target_addr = addr.clone();
+        }
+        if let Some(ref bind) = cli.sender_bind_addr {
+            self.sender_bind_addr = bind.clone();
+        }
+        if let Some(rate) = cli.rate {
+            self.rate = rate;
+        }
+        if let Some(ch) = cli.channels {
+            self.channels = ch;
+        }
+        if let Some(vad) = cli.vad_threshold {
+            self.vad_threshold = vad;
+        }
+        if let Some(sp) = cli.silence_packets {
+            self.silence_packets = sp;
+        }
+        if let Some(rbp) = cli.ring_buffer_packets {
+            self.ring_buffer_packets = rbp;
+        }
+        if let Some(active) = cli.active_sleep_ms {
+            self.active_sleep_ms = active;
+        }
+        if let Some(idle) = cli.idle_sleep_ms {
+            self.idle_sleep_ms = idle;
         }
     }
 }
