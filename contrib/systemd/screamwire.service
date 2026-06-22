@@ -1,0 +1,27 @@
+# ~/.config/systemd/user/screamwire.service
+[Unit]
+Description=ScreamWire audio sender
+After=pipewire.service pipewire.socket
+Requires=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/screamwire
+#ExecStart=%h/.local/bin/screamwire
+Restart=on-failure
+RestartSec=5
+
+# PipeWire environment
+Environment=XDG_RUNTIME_DIR=%t
+
+# Mild hardening that works in user scope
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
