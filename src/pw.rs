@@ -1,4 +1,5 @@
-use log::info;
+#[allow(unused_imports)]
+use log::{debug, info};
 use pipewire::{
     context::ContextRc,
     init,
@@ -150,7 +151,7 @@ pub fn run_audio_stream(
         })
         .state_changed(move |_stream, _user_data, _old, new| {
             if new == pipewire::stream::StreamState::Streaming {
-                info!("Stream started ({})", log_desc_for_closure);
+                debug!("Stream started ({})", log_desc_for_closure);
             }
         })
         .register()?;

@@ -80,7 +80,7 @@ impl Vad {
                     self.active = false;
                     self.silent_count = 0;
                     self.sleep_ms = self.idle_sleep_ms; // switch to idle sleep
-                    info!("VAD: silence detected, pausing TX");
+                    debug!("VAD: silence detected, pausing TX");
                 }
             } else {
                 self.silent_count = 0;
@@ -90,7 +90,7 @@ impl Vad {
                 self.active = true;
                 self.silent_count = 0;
                 self.sleep_ms = self.active_sleep_ms; // switch back to active sleep
-                info!("VAD: audio resumed, restarting TX");
+                debug!("VAD: audio resumed, restarting TX");
             }
         }
 
