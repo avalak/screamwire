@@ -96,7 +96,7 @@ pub fn send_loop(
     format: AudioParams,
     vad_config: VadConfig,
 ) {
-    let mut vad = Vad::new(vad_config, format.frame_bytes());
+    let mut vad = Vad::new(vad_config, format);
     let socket = UdpSocket::bind(bind_addr).expect("Failed to bind UDP socket");
 
     info!("Multicast target: {}, sender bind: {}", target, bind_addr);
