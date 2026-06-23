@@ -14,6 +14,9 @@ pub struct Config {
     #[serde(default = "default_rate")]
     pub rate: u32,
 
+    #[serde(default = "default_bits")]
+    pub bits: u32,
+
     #[serde(default = "default_channels")]
     pub channels: u32,
 
@@ -52,6 +55,10 @@ fn default_rate() -> u32 {
     crate::scream::RATE
 }
 
+fn default_bits() -> u32 {
+    crate::scream::BITS
+}
+
 fn default_channels() -> u32 {
     crate::scream::CHANNELS
 }
@@ -64,7 +71,8 @@ fn default_vad_threshold() -> u16 {
 }
 
 fn default_silence_packets() -> u32 {
-    // 1 second of silence = ceil(RATE / (AUDIO_PAYLOAD_SIZE / FRAME_BYTES))
+    // 1 second of silence = ceil(RATE / (AUDIO_PAYLOAD_SIZE / frame_bytes))
+    // frame_bytes = (bits/8)*channels. For 16-bit stereo = 4.
     // 48000 / (1152 / 4) = 48000 / 288 = 166.67 -> 167 packets
     167
 }
@@ -114,6 +122,7 @@ impl Config {
                 target_addr: default_target_addr(),
                 sender_bind_addr: default_sender_bind_addr(),
                 rate: default_rate(),
+                bits: default_bits(),
                 channels: default_channels(),
                 vad_threshold: default_vad_threshold(),
                 silence_packets: default_silence_packets(),
@@ -135,6 +144,9 @@ impl Config {
         }
         if let Some(rate) = cli.rate {
             self.rate = rate;
+        }
+        if let Some(bits) = cli.bits {
+            self.bits = bits;
         }
         if let Some(ch) = cli.channels {
             self.channels = ch;
@@ -182,6 +194,7 @@ impl Config {
             target_addr: default_target_addr(),
             sender_bind_addr: default_sender_bind_addr(),
             rate: default_rate(),
+            bits: default_bits(),
             channels: default_channels(),
             vad_threshold: default_vad_threshold(),
             silence_packets: default_silence_packets(),

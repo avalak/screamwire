@@ -1,7 +1,10 @@
-.PHONY: all check fmt clippy lint clean
+.PHONY: all test check fmt clippy lint clean
 
 all:
 	cargo build --release
+
+test:
+	cargo test
 
 check:
 	cargo check

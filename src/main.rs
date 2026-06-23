@@ -55,21 +55,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
 
-    let vad_threshold = cfg.vad_threshold;
-    let silence_packets = cfg.silence_packets;
-    let active_sleep_ms = cfg.active_sleep_ms;
-    let idle_sleep_ms = cfg.idle_sleep_ms;
-
+    let frame_bytes = (cfg.bits as usize / 8) * cfg.channels as usize;
+    let vad_config = vad::VadConfig {
+        threshold: cfg.vad_threshold,
+        silence_packets: cfg.silence_packets,
+        active_sleep_ms: cfg.active_sleep_ms,
+        idle_sleep_ms: cfg.idle_sleep_ms,
+        frame_bytes,
+    };
     // Start sender thread
+
     let _sender_thread = thread::spawn(move || {
         scream::send_loop(
             consumer,
             target_addr,
             bind_addr,
-            vad_threshold,
-            silence_packets,
-            active_sleep_ms,
-            idle_sleep_ms,
+            cfg.rate,
+            scream::BITS,
+            cfg.channels,
+            vad_config,
         )
     });
 

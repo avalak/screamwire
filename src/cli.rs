@@ -23,7 +23,11 @@ pub struct Cli {
     #[arg(long)]
     pub rate: Option<u32>,
 
-    /// Number of audio channels (default: 2)
+    /// Audio bits (default: 16)
+    #[arg(long)]
+    pub bits: Option<u32>,
+
+    /// Number of audio channels. Common setups should work as expected (default: 2)
     #[arg(long)]
     pub channels: Option<u32>,
 
