@@ -7,7 +7,6 @@ pub struct VadConfig {
     pub silence_packets: u32,
     pub active_sleep_ms: u64,
     pub idle_sleep_ms: u64,
-    pub frame_bytes: usize, // bytes per audio frame (bits/8 * channels)
 }
 
 /// Voice Activity Detector with integrated sleep policy.
@@ -30,12 +29,12 @@ pub struct Vad {
 }
 
 impl Vad {
-    pub fn new(config: VadConfig) -> Self {
+    pub fn new(config: VadConfig, frame_bytes: usize) -> Self {
         let enabled = config.threshold > 0 && config.silence_packets > 0;
 
         // Calculate packet and silence duration for logging
         let packet_duration_ms = (crate::scream::AUDIO_PAYLOAD_SIZE as f64
-            / config.frame_bytes as f64
+            / frame_bytes as f64
             / crate::scream::RATE as f64)
             * 1000.0;
         let silence_duration_ms = packet_duration_ms * config.silence_packets as f64;

@@ -1,3 +1,4 @@
+use crate::scream::AudioParams;
 #[allow(unused_imports)]
 use log::{debug, info};
 use pipewire::{
@@ -75,9 +76,7 @@ pub fn get_sink_names() -> Vec<String> {
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
 pub fn run_audio_stream(
     mut producer: impl Producer<Item = u8> + Send + 'static,
-    rate: u32,
-    bits: u32,
-    channels: u32,
+    format: AudioParams,
     target_sink: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     init();
@@ -87,7 +86,7 @@ pub fn run_audio_stream(
     let core = context.connect_rc(None)?;
 
     // SPA format pod
-    let pod_data = make_format_data(rate, bits, channels);
+    let pod_data = make_format_data(format);
     let pod = pipewire::spa::pod::Pod::from_bytes(&pod_data).unwrap();
     let mut params = [pod];
 
@@ -166,12 +165,12 @@ pub fn run_audio_stream(
 }
 
 /// Build a SPA format pod for the given sample rate, bit depth and channel count.
-fn make_format_data(rate: u32, bits: u32, channels: u32) -> Vec<u8> {
-    let audio_format = match bits {
+fn make_format_data(format: AudioParams) -> Vec<u8> {
+    let audio_format = match format.bits {
         16 => spa::sys::SPA_AUDIO_FORMAT_S16_LE,
         24 => spa::sys::SPA_AUDIO_FORMAT_S24_LE,
         32 => spa::sys::SPA_AUDIO_FORMAT_S32_LE,
-        _ => panic!("Unsupported bit depth: {}", bits),
+        _ => panic!("Unsupported bit depth: {}", format.bits),
     };
 
     let obj = spa::pod::Object {
@@ -196,12 +195,12 @@ fn make_format_data(rate: u32, bits: u32, channels: u32) -> Vec<u8> {
             spa::pod::Property {
                 key: spa::sys::SPA_FORMAT_AUDIO_rate,
                 flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Int(rate as i32),
+                value: spa::pod::Value::Int(format.rate as i32),
             },
             spa::pod::Property {
                 key: spa::sys::SPA_FORMAT_AUDIO_channels,
                 flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Int(channels as i32),
+                value: spa::pod::Value::Int(format.channels as i32),
             },
         ],
     };

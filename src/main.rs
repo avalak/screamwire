@@ -55,26 +55,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
 
-    let frame_bytes = (cfg.bits as usize / 8) * cfg.channels as usize;
+    let format = scream::AudioParams {
+        rate: cfg.rate,
+        bits: cfg.bits,
+        channels: cfg.channels,
+    };
+
     let vad_config = vad::VadConfig {
         threshold: cfg.vad_threshold,
         silence_packets: cfg.silence_packets,
         active_sleep_ms: cfg.active_sleep_ms,
         idle_sleep_ms: cfg.idle_sleep_ms,
-        frame_bytes,
     };
-    // Start sender thread
 
+    // Start sender thread
     let _sender_thread = thread::spawn(move || {
-        scream::send_loop(
-            consumer,
-            target_addr,
-            bind_addr,
-            cfg.rate,
-            scream::BITS,
-            cfg.channels,
-            vad_config,
-        )
+        scream::send_loop(consumer, target_addr, bind_addr, format, vad_config)
     });
 
     // Determine the mode and launch the audio stream
@@ -90,15 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
         info!("Using existing sink: {}", name);
-        pw::run_audio_stream(
-            producer,
-            cfg.rate,
-            cfg.bits,
-            cfg.channels,
-            Some(name.clone()),
-        )?;
+        pw::run_audio_stream(producer, format, Some(name.clone()))?;
     } else {
-        pw::run_audio_stream(producer, cfg.rate, cfg.bits, cfg.channels, None)?;
+        pw::run_audio_stream(producer, format, None)?;
     }
 
     Ok(())
