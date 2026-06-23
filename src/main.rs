@@ -90,9 +90,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
         info!("Using existing sink: {}", name);
-        pw::run_audio_stream(producer, cfg.rate, cfg.channels, Some(name.clone()))?;
+        pw::run_audio_stream(
+            producer,
+            cfg.rate,
+            cfg.bits,
+            cfg.channels,
+            Some(name.clone()),
+        )?;
     } else {
-        pw::run_audio_stream(producer, cfg.rate, cfg.channels, None)?;
+        pw::run_audio_stream(producer, cfg.rate, cfg.bits, cfg.channels, None)?;
     }
 
     Ok(())

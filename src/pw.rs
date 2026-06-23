@@ -76,6 +76,7 @@ pub fn get_sink_names() -> Vec<String> {
 pub fn run_audio_stream(
     mut producer: impl Producer<Item = u8> + Send + 'static,
     rate: u32,
+    bits: u32,
     channels: u32,
     target_sink: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,8 +86,8 @@ pub fn run_audio_stream(
     let context = ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
 
-    // SPA format pod (S16LE)
-    let pod_data = make_format_data(rate, channels);
+    // SPA format pod
+    let pod_data = make_format_data(rate, bits, channels);
     let pod = pipewire::spa::pod::Pod::from_bytes(&pod_data).unwrap();
     let mut params = [pod];
 
@@ -164,8 +165,15 @@ pub fn run_audio_stream(
     Ok(())
 }
 
-/// Build a SPA format pod for the given sample rate and channel count.
-fn make_format_data(rate: u32, channels: u32) -> Vec<u8> {
+/// Build a SPA format pod for the given sample rate, bit depth and channel count.
+fn make_format_data(rate: u32, bits: u32, channels: u32) -> Vec<u8> {
+    let audio_format = match bits {
+        16 => spa::sys::SPA_AUDIO_FORMAT_S16_LE,
+        24 => spa::sys::SPA_AUDIO_FORMAT_S24_LE,
+        32 => spa::sys::SPA_AUDIO_FORMAT_S32_LE,
+        _ => panic!("Unsupported bit depth: {}", bits),
+    };
+
     let obj = spa::pod::Object {
         type_: spa::sys::SPA_TYPE_OBJECT_Format,
         id: spa::sys::SPA_PARAM_EnumFormat,
@@ -183,7 +191,7 @@ fn make_format_data(rate: u32, channels: u32) -> Vec<u8> {
             spa::pod::Property {
                 key: spa::sys::SPA_FORMAT_AUDIO_format,
                 flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Id(spa::utils::Id(spa::sys::SPA_AUDIO_FORMAT_S16_LE)),
+                value: spa::pod::Value::Id(spa::utils::Id(audio_format)),
             },
             spa::pod::Property {
                 key: spa::sys::SPA_FORMAT_AUDIO_rate,
