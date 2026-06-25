@@ -2,6 +2,7 @@
 members = [
     "common",
     "sender",
+    "receiver",
 ]
 resolver = "3"
 

@@ -1,0 +1,17 @@
+[package]
+name = "screamwire-receiver"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "screamwire-receiver"
+path = "src/main.rs"
+
+[dependencies]
+screamwire-common = { path = "../common" }
+
+clap = { version = "4.6", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+pipewire = { version = "0.10", features = ["v0_3_44"] }
+ringbuf = "0.5"

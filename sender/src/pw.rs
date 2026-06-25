@@ -1,3 +1,4 @@
+use screamwire_common::pw::make_format_data;
 use screamwire_common::types::AudioParams;
 
 #[allow(unused_imports)]
@@ -163,54 +164,4 @@ pub fn run_audio_stream(
     mainloop.run();
 
     Ok(())
-}
-
-/// Build a SPA format pod for the given sample rate, bit depth and channel count.
-fn make_format_data(format: AudioParams) -> Vec<u8> {
-    let audio_format = match format.bits {
-        16 => spa::sys::SPA_AUDIO_FORMAT_S16_LE,
-        24 => spa::sys::SPA_AUDIO_FORMAT_S24_LE,
-        32 => spa::sys::SPA_AUDIO_FORMAT_S32_LE,
-        _ => panic!("Unsupported bit depth: {}", format.bits),
-    };
-
-    let obj = spa::pod::Object {
-        type_: spa::sys::SPA_TYPE_OBJECT_Format,
-        id: spa::sys::SPA_PARAM_EnumFormat,
-        properties: vec![
-            spa::pod::Property {
-                key: spa::sys::SPA_FORMAT_mediaType,
-                flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Id(spa::utils::Id(spa::sys::SPA_MEDIA_TYPE_audio)),
-            },
-            spa::pod::Property {
-                key: spa::sys::SPA_FORMAT_mediaSubtype,
-                flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Id(spa::utils::Id(spa::sys::SPA_MEDIA_SUBTYPE_raw)),
-            },
-            spa::pod::Property {
-                key: spa::sys::SPA_FORMAT_AUDIO_format,
-                flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Id(spa::utils::Id(audio_format)),
-            },
-            spa::pod::Property {
-                key: spa::sys::SPA_FORMAT_AUDIO_rate,
-                flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Int(format.rate as i32),
-            },
-            spa::pod::Property {
-                key: spa::sys::SPA_FORMAT_AUDIO_channels,
-                flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Int(format.channels as i32),
-            },
-        ],
-    };
-
-    spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(obj),
-    )
-    .unwrap()
-    .0
-    .into_inner()
 }

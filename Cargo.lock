@@ -611,6 +611,21 @@ dependencies = [
 [[package]]
 name = "screamwire-common"
 version = "0.1.0"
+dependencies = [
+ "pipewire",
+]
+
+[[package]]
+name = "screamwire-receiver"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger",
+ "log",
+ "pipewire",
+ "ringbuf",
+ "screamwire-common",
+]
 
 [[package]]
 name = "serde"
