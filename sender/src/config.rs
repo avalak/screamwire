@@ -1,3 +1,5 @@
+use screamwire_common::scream::default_target_addr;
+use screamwire_common::types::{DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -43,24 +45,20 @@ pub struct Config {
     pub sink_name: Option<String>,
 }
 
-fn default_target_addr() -> String {
-    "239.255.77.77:4010".to_string()
-}
-
 fn default_sender_bind_addr() -> String {
     "0.0.0.0:0".to_string()
 }
 
 fn default_rate() -> u32 {
-    crate::scream::RATE
+    DEFAULT_RATE
 }
 
 fn default_bits() -> u32 {
-    crate::scream::BITS
+    DEFAULT_BITS
 }
 
 fn default_channels() -> u32 {
-    crate::scream::CHANNELS
+    DEFAULT_CHANNELS
 }
 
 fn default_vad_threshold() -> u16 {

@@ -2,12 +2,13 @@ use clap::Parser;
 use log::{debug, info};
 use ringbuf::{HeapRb, traits::Split};
 use std::thread;
-
 mod cli;
 mod config;
 mod pw;
-mod scream;
+mod udp_sender;
 mod vad;
+use screamwire_common::scream::PACKET_SIZE;
+use screamwire_common::types::AudioParams;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
@@ -48,14 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("ScreamWire sender starting...");
 
     // Create the ring buffer and start the network sender thread
-    let buffer_size = scream::PACKET_SIZE * cfg.ring_buffer_packets;
+    let buffer_size = PACKET_SIZE * cfg.ring_buffer_packets;
     let rb = HeapRb::<u8>::new(buffer_size);
     let (producer, consumer) = rb.split();
 
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
 
-    let format = scream::AudioParams {
+    let format = AudioParams {
         rate: cfg.rate,
         bits: cfg.bits,
         channels: cfg.channels,
@@ -70,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start sender thread
     let _sender_thread = thread::spawn(move || {
-        scream::send_loop(consumer, target_addr, bind_addr, format, vad_config)
+        udp_sender::send_loop(consumer, target_addr, bind_addr, format, vad_config)
     });
 
     // Determine the mode and launch the audio stream

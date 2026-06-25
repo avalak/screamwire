@@ -1,6 +1,8 @@
-use crate::scream::AudioParams;
 #[allow(unused_imports)]
 use log::{debug, error, info};
+use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
+use screamwire_common::types::AudioParams;
+
 #[derive(Debug, Clone)]
 pub struct VadConfig {
     pub threshold: u16,
@@ -35,10 +37,8 @@ impl Vad {
 
         let frame_bytes = format.frame_bytes();
         // Calculate packet and silence duration for logging
-        let packet_duration_ms = (crate::scream::AUDIO_PAYLOAD_SIZE as f64
-            / frame_bytes as f64
-            / crate::scream::RATE as f64)
-            * 1000.0;
+        let packet_duration_ms =
+            (AUDIO_PAYLOAD_SIZE as f64 / frame_bytes as f64 / format.rate as f64) * 1000.0;
         let silence_duration_ms = packet_duration_ms * config.silence_packets as f64;
 
         info!(

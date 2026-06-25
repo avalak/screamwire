@@ -1,13 +1,10 @@
-[package]
-name = "screamwire"
+[workspace]
+members = [
+    "common",
+    "sender",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-clap = { version = "4.6", features = ["derive"] }
-pipewire = { version = "0.10", features = ["v0_3_44"] }
-ringbuf = "0.5"
-toml = "1.1"
-serde = { version = "1.0", features = ["derive"] }
-log = "0.4"
-env_logger = "0.11"

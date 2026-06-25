@@ -1,4 +1,5 @@
-use crate::scream::AudioParams;
+use screamwire_common::types::AudioParams;
+
 #[allow(unused_imports)]
 use log::{debug, info};
 use pipewire::{
