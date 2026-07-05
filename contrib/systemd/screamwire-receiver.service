@@ -1,0 +1,27 @@
+# ~/.config/systemd/user/screamwire-receiver.service
+[Unit]
+Description=ScreamWire audio receiver
+After=pipewire.service pipewire.socket
+Requires=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/screamwire-receiver
+#ExecStart=%h/.local/bin/screamwire-receiver
+Restart=on-failure
+RestartSec=5
+
+# PipeWire environment
+Environment=XDG_RUNTIME_DIR=%t
+
+# Mild hardening (user scope)
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
