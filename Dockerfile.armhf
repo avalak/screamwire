@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+FROM debian:trixie-slim
+
+# Common tools
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+        clang \
+        build-essential \
+        pkg-config \
+        && rm -rf /var/lib/apt/lists/*
+
+# ARM cross-compiler
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    dpkg --add-architecture armhf && \
+    apt-get update && \
+    apt-get install -y \
+        crossbuild-essential-armhf \
+        && rm -rf /var/lib/apt/lists/*
+
+# Dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y \
+        libpipewire-0.3-dev:armhf \
+        && rm -rf /var/lib/apt/lists/*
+
+# Environment
+ENV PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV BINDGEN_EXTRA_CLANG_ARGS="--target=arm-linux-gnueabihf -I/usr/arm-linux-gnueabihf/include -I/usr/include/arm-linux-gnueabihf"
+
+ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER="arm-linux-gnueabihf-gcc"
+# Allwinner H3 Specific
+ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS="-C target-cpu=cortex-a7 -C target-feature=+neon,+vfp4"
+
+# Usage:
+# cross build --bin screamwire-receiver --target=armv7-unknown-linux-gnueabihf --release
+
