@@ -17,7 +17,7 @@ pub struct VadConfig {
 /// every packet is sent and the active sleep duration is used.
 pub struct Vad {
     enabled: bool,
-    threshold: u16,
+    threshold: u32,
     silence_packets: u32,
 
     active: bool,
@@ -52,7 +52,7 @@ impl Vad {
 
         Vad {
             enabled,
-            threshold: config.threshold,
+            threshold: config.threshold as u32,
             silence_packets: config.silence_packets,
             active: true,
             silent_count: 0,
@@ -73,12 +73,13 @@ impl Vad {
             return (true, self.sleep_ms);
         }
 
-        // Early exit: stop scanning as soon as a loud sample is found
-        let sample_bytes = (self.format.bits / 8) as usize;
-        let has_signal = packet.chunks_exact(sample_bytes).any(|ch| {
-            let sample = sign_extend(ch, self.format.bits);
-            sample.unsigned_abs() > self.threshold as u32
-        });
+        let has_signal = match self.format.bits {
+            16 => self.scan_16bit(packet),
+            24 => self.scan_24bit(packet),
+            32 => self.scan_32bit(packet),
+            8 => self.scan_8bit(packet), // normally not used
+            _ => false,
+        };
 
         if self.active {
             if !has_signal {
@@ -92,31 +93,67 @@ impl Vad {
             } else {
                 self.silent_count = 0;
             }
-        } else {
-            if has_signal {
-                self.active = true;
-                self.silent_count = 0;
-                self.sleep_ms = self.active_sleep_ms; // switch back to active sleep
-                debug!("VAD: audio resumed, restarting TX");
-            }
+        } else if has_signal {
+            self.active = true;
+            self.silent_count = 0;
+            self.sleep_ms = self.active_sleep_ms; // switch back to active sleep
+            debug!("VAD: audio resumed, restarting TX");
         }
 
         (self.active, self.sleep_ms)
     }
-}
 
-/// Extend sign to i32 for any bit depth ≤ 32.
-fn sign_extend(bytes: &[u8], bits: u32) -> i32 {
-    let shift = 32 - bits;
-    let raw = match bytes.len() {
-        1 => i8::from_le_bytes([bytes[0]]) as i32,
-        2 => i16::from_le_bytes([bytes[0], bytes[1]]) as i32,
-        3 => {
-            let sign_byte = if bytes[2] & 0x80 != 0 { 0xFFu32 } else { 0 };
-            (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) | (sign_byte << 24)) as i32
+    // Bit‑depth‑specific scanners
+
+    /// 16‑bit: uses `align_to` to let the compiler auto‑vectorise.
+    fn scan_16bit(&self, packet: &[u8]) -> bool {
+        let (prefix, samples, suffix) = unsafe { packet.align_to::<i16>() };
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return packet.chunks_exact(2).any(|ch| {
+                let s = i16::from_le_bytes([ch[0], ch[1]]);
+                (s as i32).unsigned_abs() > self.threshold
+            });
         }
-        4 => i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-        _ => 0,
-    };
-    (raw << shift) >> shift // arithmetic shift extends sign
+
+        samples
+            .iter()
+            .any(|&s| (s as i32).unsigned_abs() > self.threshold)
+    }
+
+    /// 32‑bit: same as 16-bit
+    fn scan_32bit(&self, packet: &[u8]) -> bool {
+        let (prefix, samples, suffix) = unsafe { packet.align_to::<i32>() };
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return packet.chunks_exact(4).any(|ch| {
+                let s = i32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+                s.unsigned_abs() > self.threshold
+            });
+        }
+
+        samples.iter().any(|&s| s.unsigned_abs() > self.threshold)
+    }
+
+    /// 24‑bit
+    fn scan_24bit(&self, packet: &[u8]) -> bool {
+        packet.chunks_exact(3).any(|ch| {
+            let raw = u32::from_le_bytes([ch[0], ch[1], ch[2], 0]);
+
+            let sample = if (raw & 0x0080_0000) != 0 {
+                (raw | 0xFF00_0000) as i32
+            } else {
+                raw as i32
+            };
+
+            sample.unsigned_abs() > self.threshold
+        })
+    }
+
+    /// 8‑bit; normally not used
+    fn scan_8bit(&self, packet: &[u8]) -> bool {
+        packet
+            .iter()
+            .any(|&b| (b as i8 as i32).unsigned_abs() > self.threshold)
+    }
 }
