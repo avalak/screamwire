@@ -5,7 +5,7 @@ use ringbuf::{
     traits::{Producer, Split},
 };
 use screamwire_common::scream::{
-    AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, default_target_addr, make_header, parse_header,
+    AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, default_target_addr, parse_header,
 };
 use screamwire_common::types::{AudioParams, DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 use std::collections::HashMap;
@@ -66,11 +66,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if changed {
                         info!("New or changed header from {}: {:02X?}", addr, header);
                         headers.insert(addr, header);
-                        let new_format = parse_header(&header);
-                        if new_format != current_format {
-                            info!("Audio format changed, restarting stream...");
-                            // TODO: stop current stream and start a new one
-                            current_format = new_format;
+                        if let Some(new_format) = parse_header(&header) {
+                            if new_format != current_format {
+                                debug!(
+                                    "{}:{} changed format to {:?}",
+                                    addr.ip(),
+                                    addr.port(),
+                                    new_format
+                                );
+                                info!("Audio format changed, restarting stream...");
+                                // TODO: stop current stream and start a new one
+                                current_format = new_format;
+                            }
+                        } else {
+                            warn!("Failed to parse header, keeping current format");
                         }
                     }
                     producer.push_slice(&buf[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]);

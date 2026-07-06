@@ -1,4 +1,4 @@
-use screamwire_common::scream::{channel_map, make_header};
+use screamwire_common::scream::{channel_map, make_header, parse_header};
 use screamwire_common::types::AudioParams;
 
 #[test]
@@ -161,4 +161,45 @@ fn test_frame_bytes() {
         channels: 1,
     };
     assert_eq!(format.frame_bytes(), 4);
+}
+
+// parse_header
+
+#[test]
+fn test_parse_standard() {
+    let header = make_header(AudioParams {
+        rate: 48000,
+        bits: 16,
+        channels: 2,
+    });
+    let params = parse_header(&header).expect("Failed to parse standard header");
+    assert_eq!(params.rate, 48000);
+    assert_eq!(params.bits, 16);
+    assert_eq!(params.channels, 2);
+}
+
+#[test]
+fn test_parse_44100_stereo() {
+    let header = make_header(AudioParams {
+        rate: 44100,
+        bits: 16,
+        channels: 2,
+    });
+    let params = parse_header(&header).expect("Failed to parse 44.1kHz header");
+    assert_eq!(params.rate, 44100);
+    assert_eq!(params.bits, 16);
+    assert_eq!(params.channels, 2);
+}
+
+#[test]
+fn test_parse_24bit() {
+    let header = make_header(AudioParams {
+        rate: 48000,
+        bits: 24,
+        channels: 2,
+    });
+    let params = parse_header(&header).expect("Failed to parse 24-bit header");
+    assert_eq!(params.rate, 48000);
+    assert_eq!(params.bits, 24);
+    assert_eq!(params.channels, 2);
 }

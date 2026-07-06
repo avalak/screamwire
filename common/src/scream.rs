@@ -1,6 +1,6 @@
 //! Scream protocol constants, header builder, and channel map.
 
-use super::types::{AudioParams, DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
+use super::types::AudioParams;
 
 /// Default multicast group address (IPv4).
 pub const DEFAULT_MULTICAST_IP: &str = "239.255.77.77";
@@ -73,12 +73,45 @@ pub fn make_header(format: AudioParams) -> [u8; HEADER_SIZE] {
     ]
 }
 
-/// Parse a 5‑byte Scream header into AudioParams.
-/// TODO: replace stub
-pub fn parse_header(_header: &[u8; HEADER_SIZE]) -> AudioParams {
-    AudioParams {
-        rate: DEFAULT_RATE,
-        bits: DEFAULT_BITS,
-        channels: DEFAULT_CHANNELS,
+/// Parse a 5‑byte Scream header into AudioParams | None.
+///
+/// Returns `None` if the header is invalid or describes an unsupported format.
+pub fn parse_header(header: &[u8; HEADER_SIZE]) -> Option<AudioParams> {
+    let sample_rate_code = header[0];
+    let bits = header[1] as u32;
+    let channels = header[2] as u32;
+
+    // Bits per sample must be 16, 24 or 32
+    if bits != 16 && bits != 24 && bits != 32 {
+        return None;
     }
+    // Channels must be in 1..8
+    if !(1..=8).contains(&channels) {
+        return None;
+    }
+
+    // Decode sample rate
+    let (base, multiplier) = if sample_rate_code & 0x80 != 0 {
+        (44100, (sample_rate_code & 0x7F) as u32)
+    } else {
+        (48000, (sample_rate_code & 0x7F) as u32)
+    };
+
+    // Multiplier must never be zero (spec requirement)
+    if multiplier == 0 {
+        return None;
+    }
+
+    let rate = base * multiplier;
+
+    // Basic sanity check: rate should be reasonable (< 768 kHz)
+    if rate > 768_000 {
+        return None;
+    }
+
+    Some(AudioParams {
+        rate,
+        bits,
+        channels,
+    })
 }
