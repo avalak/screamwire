@@ -29,30 +29,34 @@ pub fn send_loop(
     debug!("Header: {:02X?}", header);
     packet[..HEADER_SIZE].copy_from_slice(&header);
 
-    let mut local_payload = [0u8; AUDIO_PAYLOAD_SIZE];
-    let mut should_send;
     let mut sleep_ms = 1u64;
 
     loop {
         if consumer.occupied_len() >= AUDIO_PAYLOAD_SIZE {
-            // Non‑destructive peek into the ring buffer
             let (slice1, slice2) = consumer.as_slices();
-            if slice1.len() >= AUDIO_PAYLOAD_SIZE {
-                local_payload.copy_from_slice(&slice1[..AUDIO_PAYLOAD_SIZE]);
-            } else {
-                let first = slice1.len();
-                local_payload[..first].copy_from_slice(slice1);
-                local_payload[first..].copy_from_slice(&slice2[..AUDIO_PAYLOAD_SIZE - first]);
-            }
 
-            // VAD
-            (should_send, sleep_ms) = vad.process(&local_payload);
-
-            if should_send {
-                packet[HEADER_SIZE..].copy_from_slice(&local_payload);
-                if let Err(e) = socket.send_to(&packet, target) {
-                    error!("UDP send error: {}", e);
+            let (should_send, next_sleep) = if slice1.len() >= AUDIO_PAYLOAD_SIZE {
+                // Contiguous: VAD reads directly from the ring buffer (zero‑copy)
+                let payload_slice = &slice1[..AUDIO_PAYLOAD_SIZE];
+                let (send, res_sleep) = vad.process(payload_slice);
+                if send {
+                    packet[HEADER_SIZE..].copy_from_slice(payload_slice);
                 }
+                (send, res_sleep)
+            } else {
+                // Split: copy to the packet header and let VAD process it from there
+                let first = slice1.len();
+                packet[HEADER_SIZE..HEADER_SIZE + first].copy_from_slice(slice1);
+                packet[HEADER_SIZE + first..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]
+                    .copy_from_slice(&slice2[..AUDIO_PAYLOAD_SIZE - first]);
+
+                vad.process(&packet[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE])
+            };
+
+            sleep_ms = next_sleep;
+
+            if should_send && let Err(e) = socket.send_to(&packet, target) {
+                error!("UDP send error: {}", e);
             }
 
             // Drain consumed data
