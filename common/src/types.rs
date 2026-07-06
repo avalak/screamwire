@@ -3,7 +3,7 @@ pub const DEFAULT_BITS: u32 = 16;
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioParams {
     pub rate: u32,
     pub bits: u32,

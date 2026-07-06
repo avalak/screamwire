@@ -1,6 +1,6 @@
 //! Scream protocol constants, header builder, and channel map.
 
-use super::types::AudioParams;
+use super::types::{AudioParams, DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 
 /// Default multicast group address (IPv4).
 pub const DEFAULT_MULTICAST_IP: &str = "239.255.77.77";
@@ -71,4 +71,14 @@ pub fn make_header(format: AudioParams) -> [u8; HEADER_SIZE] {
         map as u8,
         (map >> 8) as u8,
     ]
+}
+
+/// Parse a 5‑byte Scream header into AudioParams.
+/// TODO: replace stub
+pub fn parse_header(_header: &[u8; HEADER_SIZE]) -> AudioParams {
+    AudioParams {
+        rate: DEFAULT_RATE,
+        bits: DEFAULT_BITS,
+        channels: DEFAULT_CHANNELS,
+    }
 }

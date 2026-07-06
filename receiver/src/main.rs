@@ -5,12 +5,13 @@ use ringbuf::{
     traits::{Producer, Split},
 };
 use screamwire_common::scream::{
-    AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, default_target_addr, make_header,
+    AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, default_target_addr, make_header, parse_header,
 };
 use screamwire_common::types::{AudioParams, DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::str::FromStr;
 use std::thread;
-use std::{collections::HashSet, str::FromStr};
 
 mod cli;
 mod pw;
@@ -42,30 +43,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rb = HeapRb::<u8>::new(buffer_size);
     let (mut producer, consumer) = rb.split();
 
+    // Cached headers for each sender address
+    let mut headers: HashMap<std::net::SocketAddr, [u8; HEADER_SIZE]> = HashMap::new();
+
     // TODO: fix hardcoded values ASAP
-    let format = AudioParams {
+    let mut current_format = AudioParams {
         rate: DEFAULT_RATE,
         bits: DEFAULT_BITS,
         channels: DEFAULT_CHANNELS,
     };
-    let expected_header = make_header(format);
-
-    let mut known_senders = HashSet::new();
 
     let _receiver_thread = thread::spawn(move || {
         let mut buf = [0u8; PACKET_SIZE];
         loop {
             match socket.recv_from(&mut buf) {
                 Ok((n, addr)) if n == PACKET_SIZE => {
-                    if known_senders.insert(addr) {
-                        info!("New sender detected: {}", addr);
+                    let header: [u8; HEADER_SIZE] = buf[..HEADER_SIZE].try_into().unwrap();
+                    let changed = match headers.get(&addr) {
+                        Some(old) => *old != header,
+                        None => true,
+                    };
+                    if changed {
+                        info!("New or changed header from {}: {:02X?}", addr, header);
+                        headers.insert(addr, header);
+                        let new_format = parse_header(&header);
+                        if new_format != current_format {
+                            info!("Audio format changed, restarting stream...");
+                            // TODO: stop current stream and start a new one
+                            current_format = new_format;
+                        }
                     }
-                    if buf[..HEADER_SIZE] == expected_header {
-                        producer.push_slice(&buf[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]);
-                        //debug!("Valid packet from {} pushed to buffer", addr);
-                    } else {
-                        warn!("Invalid Scream header from {}", addr);
-                    }
+                    producer.push_slice(&buf[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]);
                 }
                 Ok((n, addr)) => warn!("Short packet ({} bytes) from {}", n, addr),
                 Err(e) => error!("UDP recv error: {}", e),
@@ -73,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    pw::run_playback_stream(consumer, format)?;
+    pw::run_playback_stream(consumer, current_format)?;
 
     Ok(())
 }
