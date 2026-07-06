@@ -1,7 +1,16 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "screamwire", about = "Scream audio sender for PipeWire")]
+#[command(
+    name = "screamwire-sender",
+    about = "Scream audio sender for PipeWire",
+    version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_COMMIT_HASH"),
+        ")"
+    )
+)]
 pub struct Cli {
     /// Enable verbose output
     #[arg(long)]

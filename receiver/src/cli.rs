@@ -4,7 +4,13 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "screamwire-receiver",
-    about = "Scream audio receiver for PipeWire"
+    about = "Scream audio receiver for PipeWire",
+    version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_COMMIT_HASH"),
+        ")"
+    )
 )]
 pub struct Cli {
     /// Enable verbose (debug) logging.
