@@ -26,49 +26,41 @@ pub fn get_sink_names() -> Vec<String> {
     let core = context.connect_rc(None).expect("Failed to connect to core");
     let registry = core.get_registry().expect("Failed to get registry");
 
-    // Shared vector wrapped in Rc<RefCell<…>> because it is written from
-    // the registry callback and read after the loop.
     let sinks = Rc::new(RefCell::new(Vec::new()));
-    let sinks_clone = sinks.clone();
 
-    // Listen for global objects – collect every Audio/Sink that appears.
-    let registry_listener = registry
-        .add_listener_local()
-        .global(move |global| {
-            if global.type_ == ObjectType::Node
-                && let Some(props) = global.props
-                && props.get("media.class") == Some("Audio/Sink")
-            {
-                let name = props.get("node.name").unwrap_or("Unknown").to_string();
-                sinks_clone.borrow_mut().push(name);
-            }
-        })
-        .register();
+    {
+        let sinks_clone = Rc::clone(&sinks);
 
-    // Request synchronisation and keep the returned sequence number.
-    let sync_seq = core.sync(0).expect("Failed to sync core");
+        let _registry_listener = registry
+            .add_listener_local()
+            .global(move |global| {
+                if global.type_ == ObjectType::Node
+                    && let Some(props) = global.props
+                    && props.get("media.class") == Some("Audio/Sink")
+                {
+                    let name = props.get("node.name").unwrap_or("Unknown").to_string();
+                    sinks_clone.borrow_mut().push(name);
+                }
+            })
+            .register();
 
-    // When the server has processed our sync request it will emit a `done`
-    // event with the same sequence number -> we can quit the loop.
-    let mainloop_clone = mainloop.clone();
-    let core_listener = core
-        .add_listener_local()
-        .done(move |id, seq| {
-            if id == pipewire::core::PW_ID_CORE && seq == sync_seq {
-                mainloop_clone.quit();
-            }
-        })
-        .register();
+        let sync_seq = core.sync(0).expect("Failed to sync core");
+        let mainloop_clone = mainloop.clone();
 
-    mainloop.run();
+        let _core_listener = core
+            .add_listener_local()
+            .done(move |id, seq| {
+                if id == pipewire::core::PW_ID_CORE && seq == sync_seq {
+                    mainloop_clone.quit();
+                }
+            })
+            .register();
 
-    // Keep the listeners alive until here.
-    drop(registry_listener);
-    drop(core_listener);
+        mainloop.run();
+    }
 
-    // Extract the vector – the Rc and RefCell are no longer needed.
-    Rc::into_inner(sinks)
-        .expect("There are remaining Rc references")
+    Rc::try_unwrap(sinks)
+        .expect("Rc still has multiple owners")
         .into_inner()
 }
 
