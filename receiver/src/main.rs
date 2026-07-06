@@ -7,7 +7,6 @@ use ringbuf::{
 use screamwire_common::scream::{
     AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, default_target_addr, parse_header,
 };
-use screamwire_common::types::{AudioParams, DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::str::FromStr;
@@ -38,25 +37,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("Buffer size: {}", cli.buffer_size);
 
+    // Wait for first packet (format detection)
+    let (initial_format, initial_payload) = loop {
+        let mut buf = [0u8; PACKET_SIZE];
+        match socket.recv_from(&mut buf) {
+            Ok((n, addr)) if n == PACKET_SIZE => {
+                let header: [u8; HEADER_SIZE] = buf[..HEADER_SIZE].try_into().unwrap();
+                if let Some(format) = parse_header(&header) {
+                    info!("Initial format from {}: {:?}", addr, format);
+                    let payload: [u8; AUDIO_PAYLOAD_SIZE] = buf
+                        [HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]
+                        .try_into()
+                        .unwrap();
+                    break (format, payload);
+                } else {
+                    warn!("Invalid header from {}, waiting...", addr);
+                }
+            }
+            Ok((n, addr)) => warn!("Short packet ({} bytes) from {}, waiting...", n, addr),
+            Err(e) => error!("UDP recv error: {}, waiting...", e),
+        }
+    };
+
     // Ring buffer
     let buffer_size = PACKET_SIZE * cli.buffer_size as usize;
     let rb = HeapRb::<u8>::new(buffer_size);
     let (mut producer, consumer) = rb.split();
+    producer.push_slice(&initial_payload);
 
     // Cached headers for each sender address
     let mut headers: HashMap<std::net::SocketAddr, [u8; HEADER_SIZE]> = HashMap::new();
+    let mut current_format = initial_format;
 
-    // TODO: fix hardcoded values ASAP
-    let mut current_format = AudioParams {
-        rate: DEFAULT_RATE,
-        bits: DEFAULT_BITS,
-        channels: DEFAULT_CHANNELS,
-    };
-
+    // Reuse socket
+    let socket_clone = socket.try_clone().unwrap();
     let _receiver_thread = thread::spawn(move || {
         let mut buf = [0u8; PACKET_SIZE];
         loop {
-            match socket.recv_from(&mut buf) {
+            match socket_clone.recv_from(&mut buf) {
                 Ok((n, addr)) if n == PACKET_SIZE => {
                     let header: [u8; HEADER_SIZE] = buf[..HEADER_SIZE].try_into().unwrap();
                     let changed = match headers.get(&addr) {
