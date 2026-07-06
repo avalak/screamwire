@@ -18,55 +18,60 @@ pub fn default_target_addr() -> String {
     format!("{}:{}", DEFAULT_MULTICAST_IP, DEFAULT_SCREAM_PORT)
 }
 
-/// Return the Windows speaker mask for the given number of channels.
-/// NOTE: Should work for common setups
+/// Static lookup table for the Windows speaker masks (Scream spec).
+/// Array indices strictly map to the channel count (from 0 to 8).
+const LAZY_CHANNEL_MAPS: [u16; 9] = [
+    0x0000, // 0 channels (invalid fallback)
+    0x0001, // 1 ch: Front Left
+    0x0003, // 2 ch: Front Left | Front Right (Stereo)
+    0x0007, // 3 ch: Front Left | Front Right | Front Center
+    0x0033, // 4 ch: Quadraphonic
+    0x003F, // 5 ch: 5.0 Surround
+    0x060F, // 6 ch: 5.1 Surround
+    0x06FF, // 7 ch: 7.0 Layout
+    0x00FF, // 8 ch: 7.1 Surround
+];
+
+/// Returns the Windows speaker mask based on channel count without runtime branching.
+#[inline]
 pub fn channel_map(channels: u32) -> u16 {
-    match channels {
-        1 => 0x0001,                 // FL
-        2 => 0x0003,                 // FL | FR
-        3 => 0x0007,                 // FL | FR | FC
-        4 => 0x0033,                 // FL | FR | BL | BR (quad)
-        5 => 0x003F,                 // FL | FR | FC | BL | BR (5.0)
-        6 => 0x060F,                 // FL | FR | FC | LFE | BL | BR (5.1)
-        7 => 0x06FF,                 // 7.0 (non‑standard extension)
-        8 => 0x00FF,                 // 7.1 (first 8 bits)
-        _ => (1u16 << channels) - 1, // fallback for other counts
+    if channels <= 8 {
+        LAZY_CHANNEL_MAPS[channels as usize]
+    } else {
+        (1u16 << channels).wrapping_sub(1)
     }
 }
 
-/// Build a Scream packet header (5 bytes) from audio format parameters.
-///
-/// Docs: [Packet format](https://github.com/duncanthrax/scream/blob/master/tools/wireshark/README.md#packet-format).
+/// Builds a 5-byte Scream packet header using a fast branchless lookup table.
 pub fn make_header(format: AudioParams) -> [u8; HEADER_SIZE] {
-    let (base, multiplier) = if format.rate.is_multiple_of(44100) {
-        (44100, format.rate / 44100)
-    } else {
-        (48000, format.rate / 48000)
-    };
-    assert!(
-        multiplier > 0 && multiplier <= 127,
-        "Unsupported sample rate: {}",
-        format.rate
-    );
+    let sample_rate_code = match format.rate {
+        // 48000 Hz base family (bit 7 clear, lower 7 bits hold the multiplier)
+        48000 => 1,
+        96000 => 2,
+        192000 => 4,
+        384000 => 8,
+        768000 => 16,
 
-    let sample_rate_code = if base == 44100 {
-        0x80 | (multiplier as u8)
-    } else {
-        multiplier as u8
-    };
+        // 44100 Hz base family (bit 7 set: 0x80 | multiplier)
+        44100 => 0x80 | 1,
+        88200 => 0x80 | 2,
+        176400 => 0x80 | 4,
+        352800 => 0x80 | 8,
 
-    let sample_size = format.bits as u8;
-    assert!(
-        (1..=8).contains(&format.channels),
-        "Unsupported channel count: {}",
-        format.channels
-    );
+        _ => {
+            if format.rate.is_multiple_of(44100) {
+                0x80 | ((format.rate / 44100) as u8).min(127)
+            } else {
+                ((format.rate / 48000) as u8).min(127)
+            }
+        }
+    };
 
     let map = channel_map(format.channels);
 
     [
         sample_rate_code,
-        sample_size,
+        format.bits as u8,
         format.channels as u8,
         map as u8,
         (map >> 8) as u8,
