@@ -11,23 +11,16 @@ pub struct VadConfig {
     pub idle_sleep_ms: u64,
 }
 
-/// Voice Activity Detector with integrated sleep policy.
-///
-/// When `threshold == 0` or `silence_packets == 0`, VAD is disabled:
-/// every packet is sent and the active sleep duration is used.
+/// Voice Activity Detector (Silence Detector)
+/// Handle raw data and PipeWire steam events
+/// This is experimental version for PipeWire thread
 pub struct Vad {
     enabled: bool,
     threshold: u32,
-    silence_packets: u32,
+    max_silence_bytes: usize,
+    silent_bytes_count: usize,
 
     active: bool,
-    silent_count: u32,
-
-    // Sleep durations (milliseconds)
-    active_sleep_ms: u64,
-    idle_sleep_ms: u64,
-    /// Current sleep duration, updated only on state transitions.
-    sleep_ms: u64,
     format: AudioParams,
 }
 
@@ -35,72 +28,66 @@ impl Vad {
     pub fn new(config: VadConfig, format: AudioParams) -> Self {
         let enabled = config.threshold > 0 && config.silence_packets > 0;
 
-        let frame_bytes = format.frame_bytes();
-        // Calculate packet and silence duration for logging
-        let packet_duration_ms =
-            (AUDIO_PAYLOAD_SIZE as f64 / frame_bytes as f64 / format.rate as f64) * 1000.0;
-        let silence_duration_ms = packet_duration_ms * config.silence_packets as f64;
+        // Convert packets to bytes
+        // TODO: replace packet with seconds
+        let max_silence_bytes = config.silence_packets as usize * AUDIO_PAYLOAD_SIZE;
 
         info!(
-            "VAD initialised: {} (threshold={}, silence_packets={}, packet={:.1} ms, silence≈{:.0} ms)",
+            "VAD initialized for PipeWire thread: {} (threshold={}, max_silence_bytes={})",
             if enabled { "enabled" } else { "disabled" },
             config.threshold,
-            config.silence_packets,
-            packet_duration_ms,
-            silence_duration_ms
+            max_silence_bytes
         );
 
         Vad {
             enabled,
             threshold: config.threshold as u32,
-            silence_packets: config.silence_packets,
+            max_silence_bytes,
+            silent_bytes_count: 0,
             active: true,
-            silent_count: 0,
-            active_sleep_ms: config.active_sleep_ms,
-            idle_sleep_ms: config.idle_sleep_ms,
-            sleep_ms: config.active_sleep_ms,
             format,
         }
     }
 
-    /// Analyse a raw audio packet (1152 bytes, 16/24/32‑bit LE interleaved).
-    ///
-    /// Returns `(should_send, sleep_ms)`.
-    /// - `should_send`: true if the packet should be transmitted.
-    /// - `sleep_ms`: recommended sleep duration for the next idle wait.
-    pub fn process(&mut self, packet: &[u8]) -> (bool, u64) {
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        self.active = true;
+        self.silent_bytes_count = 0;
+    }
+
+    /// Analyse a raw audio data
+    /// true if data goes to ring buffer
+    pub fn process(&mut self, packet: &[u8]) -> bool {
         if !self.enabled {
-            return (true, self.sleep_ms);
+            return true;
         }
 
         let has_signal = match self.format.bits {
             16 => self.scan_16bit(packet),
             24 => self.scan_24bit(packet),
             32 => self.scan_32bit(packet),
-            8 => self.scan_8bit(packet), // normally not used
+            8 => self.scan_8bit(packet),
             _ => false,
         };
 
         if self.active {
             if !has_signal {
-                self.silent_count += 1;
-                if self.silent_count >= self.silence_packets {
+                self.silent_bytes_count += packet.len();
+                if self.silent_bytes_count >= self.max_silence_bytes {
                     self.active = false;
-                    self.silent_count = 0;
-                    self.sleep_ms = self.idle_sleep_ms; // switch to idle sleep
-                    debug!("VAD: silence detected, pausing TX");
+                    self.silent_bytes_count = 0;
+                    debug!("VAD: Silence threshold reached. Going IDLE.");
                 }
             } else {
-                self.silent_count = 0;
+                self.silent_bytes_count = 0;
             }
         } else if has_signal {
             self.active = true;
-            self.silent_count = 0;
-            self.sleep_ms = self.active_sleep_ms; // switch back to active sleep
-            debug!("VAD: audio resumed, restarting TX");
+            self.silent_bytes_count = 0;
+            debug!("VAD: Signal detected. Going ACTIVE.");
         }
 
-        (self.active, self.sleep_ms)
+        self.active
     }
 
     // Bit‑depth‑specific scanners

@@ -1,4 +1,4 @@
-use crate::vad::{Vad, VadConfig};
+use crate::vad::VadConfig;
 #[allow(unused_imports)]
 use log::{debug, error, info};
 use ringbuf::{
@@ -19,7 +19,6 @@ pub fn send_loop(
     format: AudioParams,
     vad_config: VadConfig,
 ) {
-    let mut vad = Vad::new(vad_config, format);
     let socket = UdpSocket::bind(bind_addr).expect("Failed to bind UDP socket");
 
     info!("Multicast target: {}, sender bind: {}", target, bind_addr);
@@ -29,40 +28,32 @@ pub fn send_loop(
     debug!("Header: {:02X?}", header);
     packet[..HEADER_SIZE].copy_from_slice(&header);
 
-    let mut sleep_ms = 1u64;
+    let mut sleep_ms = vad_config.active_sleep_ms;
 
     loop {
         if consumer.occupied_len() >= AUDIO_PAYLOAD_SIZE {
+            sleep_ms = vad_config.active_sleep_ms;
+
             let (slice1, slice2) = consumer.as_slices();
 
-            let (should_send, next_sleep) = if slice1.len() >= AUDIO_PAYLOAD_SIZE {
-                // Contiguous: VAD reads directly from the ring buffer (zero‑copy)
-                let payload_slice = &slice1[..AUDIO_PAYLOAD_SIZE];
-                let (send, res_sleep) = vad.process(payload_slice);
-                if send {
-                    packet[HEADER_SIZE..].copy_from_slice(payload_slice);
-                }
-                (send, res_sleep)
+            if slice1.len() >= AUDIO_PAYLOAD_SIZE {
+                packet[HEADER_SIZE..].copy_from_slice(&slice1[..AUDIO_PAYLOAD_SIZE]);
             } else {
-                // Split: copy to the packet header and let VAD process it from there
                 let first = slice1.len();
                 packet[HEADER_SIZE..HEADER_SIZE + first].copy_from_slice(slice1);
                 packet[HEADER_SIZE + first..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]
                     .copy_from_slice(&slice2[..AUDIO_PAYLOAD_SIZE - first]);
-
-                vad.process(&packet[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE])
             };
 
-            sleep_ms = next_sleep;
-
-            if should_send && let Err(e) = socket.send_to(&packet, target) {
+            if let Err(e) = socket.send_to(&packet, target) {
                 error!("UDP send error: {}", e);
             }
 
-            // Drain consumed data
             consumer.skip(AUDIO_PAYLOAD_SIZE);
         } else {
             thread::sleep(Duration::from_millis(sleep_ms));
+
+            sleep_ms = vad_config.idle_sleep_ms;
         }
     }
 }

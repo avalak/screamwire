@@ -68,6 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         active_sleep_ms: cfg.active_sleep_ms,
         idle_sleep_ms: cfg.idle_sleep_ms,
     };
+    // TODO: refactor VAD
+    let vad_config_clone = vad_config.clone();
 
     // Start sender thread
     let _sender_thread = thread::spawn(move || {
@@ -87,9 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
         info!("Using existing sink: {}", name);
-        pw::run_audio_stream(producer, format, Some(name.clone()))?;
+        pw::run_audio_stream(producer, format, Some(name.clone()), vad_config_clone)?;
     } else {
-        pw::run_audio_stream(producer, format, None)?;
+        pw::run_audio_stream(producer, format, None, vad_config_clone)?;
     }
 
     Ok(())

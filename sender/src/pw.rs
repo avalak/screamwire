@@ -1,6 +1,4 @@
-use screamwire_common::pw::make_format_data;
-use screamwire_common::types::AudioParams;
-
+use crate::vad::{Vad, VadConfig};
 #[allow(unused_imports)]
 use log::{debug, info};
 use pipewire::{
@@ -13,6 +11,8 @@ use pipewire::{
     types::ObjectType,
 };
 use ringbuf::traits::Producer;
+use screamwire_common::pw::make_format_data;
+use screamwire_common::types::AudioParams;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -72,6 +72,7 @@ pub fn run_audio_stream(
     mut producer: impl Producer<Item = u8> + Send + 'static,
     format: AudioParams,
     target_sink: Option<String>,
+    vad_config: VadConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     init();
 
@@ -126,8 +127,12 @@ pub fn run_audio_stream(
         )
     };
 
+    // VAD
+    let mut vad = Vad::new(vad_config, format);
+
     let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
     let log_desc_for_closure = log_desc.clone();
+
     let _listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
@@ -138,14 +143,23 @@ pub fn run_audio_stream(
                     let off = chunk.offset() as usize;
                     let sz = chunk.size() as usize;
                     if let Some(bytes) = data.data() {
-                        let _ = producer.push_slice(&bytes[off..off + sz]);
+                        let raw_audio = &bytes[off..off + sz];
+
+                        if vad.process(raw_audio) {
+                            let _ = producer.push_slice(raw_audio);
+                        }
                     }
                 }
             }
         })
-        .state_changed(move |_stream, _user_data, _old, new| {
+        .state_changed(move |_stream, _user_data, old, new| {
+            debug!(
+                "Stream state changed from {:?} to {:?} ({})",
+                old, new, log_desc_for_closure
+            );
             if new == pipewire::stream::StreamState::Streaming {
-                debug!("Stream started ({})", log_desc_for_closure);
+                info!("Stream started ({})", log_desc_for_closure);
+                // TODO: handle stream change event
             }
         })
         .register()?;
