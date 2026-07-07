@@ -1,3 +1,4 @@
+use crate::event_bridge::StreamEventBridge;
 use crate::vad::{Vad, VadConfig};
 #[allow(unused_imports)]
 use log::{debug, info};
@@ -73,6 +74,7 @@ pub fn run_audio_stream(
     format: AudioParams,
     target_sink: Option<String>,
     vad_config: VadConfig,
+    event_bridge: StreamEventBridge,
 ) -> Result<(), Box<dyn std::error::Error>> {
     init();
 
@@ -133,6 +135,7 @@ pub fn run_audio_stream(
     let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
     let log_desc_for_closure = log_desc.clone();
 
+    let event_bridge_clone = event_bridge.clone();
     let _listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
@@ -147,7 +150,9 @@ pub fn run_audio_stream(
 
                         if vad.process(raw_audio) {
                             let _ = producer.push_slice(raw_audio);
+                            event_bridge_clone.notify_data_ready();
                         }
+                        info!("got data");
                     }
                 }
             }

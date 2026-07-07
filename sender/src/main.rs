@@ -4,12 +4,13 @@ use ringbuf::{HeapRb, traits::Split};
 use std::thread;
 mod cli;
 mod config;
+mod event_bridge;
 mod pw;
 mod udp_sender;
 mod vad;
+use crate::event_bridge::StreamEventBridge;
 use screamwire_common::scream::PACKET_SIZE;
 use screamwire_common::types::AudioParams;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
 
@@ -56,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_addr: std::net::SocketAddr = cfg.target_addr.parse()?;
     let bind_addr: std::net::SocketAddr = cfg.sender_bind_addr.parse()?;
 
+    let event_bridge = StreamEventBridge::new();
     let format = AudioParams {
         rate: cfg.rate,
         bits: cfg.bits,
@@ -65,15 +67,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vad_config = vad::VadConfig {
         threshold: cfg.vad_threshold,
         silence_packets: cfg.silence_packets,
-        active_sleep_ms: cfg.active_sleep_ms,
-        idle_sleep_ms: cfg.idle_sleep_ms,
+        //active_sleep_ms: cfg.active_sleep_ms,
+        //idle_sleep_ms: cfg.idle_sleep_ms,
     };
     // TODO: refactor VAD
-    let vad_config_clone = vad_config.clone();
+    //let vad_config_clone = vad_config.clone();
 
+    let net_bridge = event_bridge.clone();
     // Start sender thread
     let _sender_thread = thread::spawn(move || {
-        udp_sender::send_loop(consumer, target_addr, bind_addr, format, vad_config)
+        udp_sender::send_loop(consumer, target_addr, bind_addr, format, net_bridge)
     });
 
     // Determine the mode and launch the audio stream
@@ -89,9 +92,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
         info!("Using existing sink: {}", name);
-        pw::run_audio_stream(producer, format, Some(name.clone()), vad_config_clone)?;
+        pw::run_audio_stream(
+            producer,
+            format,
+            Some(name.clone()),
+            vad_config,
+            event_bridge,
+        )?;
     } else {
-        pw::run_audio_stream(producer, format, None, vad_config_clone)?;
+        pw::run_audio_stream(producer, format, None, vad_config, event_bridge)?;
     }
 
     Ok(())
