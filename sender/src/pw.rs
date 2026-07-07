@@ -6,7 +6,7 @@ use pipewire::{
     context::ContextRc,
     init,
     main_loop::MainLoopRc,
-    properties::properties,
+    properties::PropertiesBox,
     spa,
     stream::{StreamFlags, StreamRc},
     types::ObjectType,
@@ -16,6 +16,49 @@ use screamwire_common::pw::make_format_data;
 use screamwire_common::types::AudioParams;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Build stream properties, flags and a human-readable description.
+/// Properties are grouped hierarchically by operational priority and impact.
+#[inline]
+fn stream_config(sink_name: Option<&str>) -> (PropertiesBox, StreamFlags, String) {
+    let mut props = PropertiesBox::new();
+
+    // Common properties
+    props.insert(*pipewire::keys::APP_NAME, "ScreamWire");
+    props.insert(*pipewire::keys::APP_ID, "io.github.avalak.screamwire");
+    props.insert(*pipewire::keys::MEDIA_SOFTWARE, "ScreamWire");
+    props.insert(*pipewire::keys::NODE_DESCRIPTION, "ScreamWire Sender");
+    props.insert(*pipewire::keys::MEDIA_TYPE, "Audio");
+    props.insert(*pipewire::keys::MEDIA_ROLE, "Production");
+
+    if let Some(name) = sink_name {
+        // Capture from an existing sink
+        props.insert(*pipewire::keys::MEDIA_CATEGORY, "Manager");
+        props.insert(*pipewire::keys::STREAM_CAPTURE_SINK, "true");
+        props.insert(*pipewire::keys::TARGET_OBJECT, name); // feature `v0_3_44` required
+        props.insert(*pipewire::keys::CLIENT_NAME, "ScreamWire");
+        props.insert(*pipewire::keys::MEDIA_NAME, "Capture audio");
+        props.insert(*pipewire::keys::APP_ICON_NAME, "audio-speakers");
+
+        (
+            props,
+            StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS | StreamFlags::AUTOCONNECT,
+            format!("capture from '{}'", name),
+        )
+    } else {
+        // Create a virtual sink
+        props.insert(*pipewire::keys::MEDIA_CATEGORY, "Playback");
+        props.insert(*pipewire::keys::NODE_NAME, "ScreamWire");
+        props.insert(*pipewire::keys::MEDIA_CLASS, "Audio/Sink");
+        props.insert(*pipewire::keys::NODE_VIRTUAL, "true");
+
+        (
+            props,
+            StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS | StreamFlags::AUTOCONNECT,
+            "virtual sink 'ScreamWire'".to_string(),
+        )
+    }
+}
 
 /// Return a list of all `node.name` values for PipeWire nodes with
 /// `media.class = "Audio/Sink"`.
@@ -88,46 +131,7 @@ pub fn run_audio_stream(
     let mut params = [pod];
 
     // Configure properties and flags based on mode
-    let (props, flags, log_desc) = if let Some(ref sink_name) = target_sink {
-        info!("Capture mode: using monitor of sink '{}'", sink_name);
-        (
-            properties! {
-                *pipewire::keys::CLIENT_NAME => "ScreamWire",
-                *pipewire::keys::MEDIA_NAME => "Capture audio",
-                *pipewire::keys::MEDIA_TYPE => "Audio",
-                *pipewire::keys::MEDIA_CATEGORY => "Manager", //"Capture",
-                *pipewire::keys::MEDIA_ROLE => "Production",
-                *pipewire::keys::STREAM_CAPTURE_SINK => "true",
-                *pipewire::keys::TARGET_OBJECT => sink_name.as_str(),
-                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Sender",
-                *pipewire::keys::APP_ICON_NAME => "audio-speakers",
-                *pipewire::keys::APP_NAME => "ScreamWire",
-                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
-                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
-            },
-            StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-            format!("capture from '{}'", sink_name),
-        )
-    } else {
-        info!("Virtual mode: creating 'ScreamWire' output device");
-        (
-            properties! {
-                *pipewire::keys::MEDIA_TYPE => "Audio",
-                *pipewire::keys::MEDIA_CATEGORY => "Playback",
-                *pipewire::keys::MEDIA_ROLE => "Production",
-                *pipewire::keys::NODE_NAME => "ScreamWire",
-                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Remote Output",
-                *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
-                *pipewire::keys::NODE_VIRTUAL => "true",
-
-                *pipewire::keys::APP_NAME => "ScreamWire",
-                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
-                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
-            },
-            StreamFlags::MAP_BUFFERS,
-            "virtual sink 'ScreamWire'".to_string(),
-        )
-    };
+    let (props, flags, log_desc) = stream_config(target_sink.as_deref());
 
     // VAD
     let vad = Vad::new(vad_config, format);
