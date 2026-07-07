@@ -52,8 +52,6 @@ fn bench_vad(c: &mut Criterion, bits: u32) {
     let config = VadConfig {
         threshold: 100,
         silence_packets: 167,
-        active_sleep_ms: 4,
-        idle_sleep_ms: 30,
     };
     let data = generate_packet(bits, 2, 200);
     let mut vad = Vad::new(config, format);
