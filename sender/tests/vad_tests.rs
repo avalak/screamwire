@@ -45,8 +45,6 @@ fn make_vad(bits: u32, threshold: u16, silence_packets: u32) -> Vad {
     let config = VadConfig {
         threshold,
         silence_packets,
-        active_sleep_ms: 4,
-        idle_sleep_ms: 30,
     };
     Vad::new(config, format)
 }
@@ -57,11 +55,11 @@ fn test_silence_detected_16bit() {
     let pkt = silent_packet(16);
 
     // First silent packet – still active
-    let (send, _) = vad.process(&pkt);
+    let send = vad.process(&pkt);
     assert!(send, "Still active after one silent packet");
 
     // Second silent packet – should trigger pause
-    let (send, _) = vad.process(&pkt);
+    let send = vad.process(&pkt);
     assert!(!send, "Should pause after two silent packets");
 }
 
@@ -71,7 +69,7 @@ fn test_signal_detected_16bit() {
     let loud = loud_packet(16, 2, 100);
 
     // Should detect signal immediately
-    let (send, _) = vad.process(&loud);
+    let send = vad.process(&loud);
     assert!(send, "Signal detected, should send");
 }
 
@@ -80,7 +78,7 @@ fn test_signal_detected_24bit() {
     let mut vad = make_vad(24, 1, 2);
     let loud = loud_packet(24, 2, 100);
 
-    let (send, _) = vad.process(&loud);
+    let send = vad.process(&loud);
     assert!(send, "24‑bit signal detected");
 }
 
@@ -89,7 +87,7 @@ fn test_signal_detected_32bit() {
     let mut vad = make_vad(32, 1, 2);
     let loud = loud_packet(32, 2, 100);
 
-    let (send, _) = vad.process(&loud);
+    let send = vad.process(&loud);
     assert!(send, "32‑bit signal detected");
 }
 
@@ -101,11 +99,11 @@ fn test_resume_after_silence() {
 
     // Feed two silent packets to pause
     vad.process(&silent);
-    let (send, _) = vad.process(&silent);
+    let send = vad.process(&silent);
     assert!(!send, "Paused after two silent packets");
 
     // Feed a loud packet to resume
-    let (send, _) = vad.process(&loud);
+    let send = vad.process(&loud);
     assert!(send, "Resumed after loud packet");
 }
 
@@ -121,7 +119,7 @@ fn test_counter_reset_on_signal() {
 
     // Now three more silents should not yet trigger pause
     for _ in 0..3 {
-        let (send, _) = vad.process(&silent);
+        let send = vad.process(&silent);
         assert!(send, "Still active, silence count reset");
     }
 }
@@ -133,7 +131,7 @@ fn test_vad_disabled_with_zero_threshold() {
 
     // Should always send, no matter how many silent packets
     for _ in 0..10 {
-        let (send, _) = vad.process(&silent);
+        let send = vad.process(&silent);
         assert!(send, "VAD disabled, always send");
     }
 }
