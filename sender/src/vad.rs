@@ -7,8 +7,6 @@ use screamwire_common::types::AudioParams;
 pub struct VadConfig {
     pub threshold: u16,
     pub silence_packets: u32,
-    //pub active_sleep_ms: u64,
-    //pub idle_sleep_ms: u64,
 }
 
 /// Voice Activity Detector (Silence Detector)
@@ -49,9 +47,13 @@ impl Vad {
         }
     }
 
-    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.active = true;
+        self.silent_bytes_count = 0;
+    }
+
+    pub fn force_idle(&mut self) {
+        self.active = false;
         self.silent_bytes_count = 0;
     }
 

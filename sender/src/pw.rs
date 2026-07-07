@@ -70,7 +70,7 @@ pub fn get_sink_names() -> Vec<String> {
 /// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
 pub fn run_audio_stream(
-    mut producer: impl Producer<Item = u8> + Send + 'static,
+    producer: impl Producer<Item = u8> + Send + 'static,
     format: AudioParams,
     target_sink: Option<String>,
     vad_config: VadConfig,
@@ -130,9 +130,18 @@ pub fn run_audio_stream(
     };
 
     // VAD
-    let mut vad = Vad::new(vad_config, format);
+    let vad = Vad::new(vad_config, format);
 
     let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
+
+    struct StreamContext<P> {
+        producer: P,
+        vad: Vad,
+    }
+    let shared_context = Rc::new(RefCell::new(StreamContext { producer, vad }));
+    let process_context = Rc::clone(&shared_context);
+    let state_context = Rc::clone(&shared_context);
+
     let log_desc_for_closure = log_desc.clone();
 
     let event_bridge_clone = event_bridge.clone();
@@ -148,11 +157,12 @@ pub fn run_audio_stream(
                     if let Some(bytes) = data.data() {
                         let raw_audio = &bytes[off..off + sz];
 
-                        if vad.process(raw_audio) {
-                            let _ = producer.push_slice(raw_audio);
+                        let mut ctx = process_context.borrow_mut();
+                        if ctx.vad.process(raw_audio) {
+                            let _ = ctx.producer.push_slice(raw_audio);
                             event_bridge_clone.notify_data_ready();
                         }
-                        info!("got data");
+                        debug!("got data");
                     }
                 }
             }
@@ -162,9 +172,28 @@ pub fn run_audio_stream(
                 "Stream state changed from {:?} to {:?} ({})",
                 old, new, log_desc_for_closure
             );
-            if new == pipewire::stream::StreamState::Streaming {
-                info!("Stream started ({})", log_desc_for_closure);
-                // TODO: handle stream change event
+            let mut ctx = state_context.borrow_mut();
+            match new {
+                pipewire::stream::StreamState::Streaming => {
+                    info!(
+                        "Stream started ({}) -> Flushing buffer & Resetting VAD",
+                        log_desc_for_closure
+                    );
+
+                    ctx.vad.reset();
+
+                    // TODO: flush ringbuffer?
+                }
+                pipewire::stream::StreamState::Paused
+                | pipewire::stream::StreamState::Unconnected => {
+                    info!(
+                        "Stream stopped/paused ({}) -> Forcing VAD Idle",
+                        log_desc_for_closure
+                    );
+
+                    ctx.vad.force_idle();
+                }
+                _ => {}
             }
         })
         .register()?;
