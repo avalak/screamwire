@@ -26,6 +26,12 @@ pub fn send_loop(
         event_bridge.wait_for_data();
         debug!("event: Data chunk ready");
 
+        if event_bridge.swap_flush_requested() {
+            consumer.clear();
+            debug!("Send loop: Flush requested. Ringbuffer cleared.");
+            continue;
+        }
+
         while consumer.occupied_len() >= AUDIO_PAYLOAD_SIZE {
             let bytes_read =
                 consumer.pop_slice(&mut packet[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]);

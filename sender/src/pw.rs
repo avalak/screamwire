@@ -160,6 +160,7 @@ pub fn run_audio_stream(
             }
             if process_force_idle.swap(false, Ordering::Acquire) {
                 vad.force_idle();
+                event_bridge_clone.notify_flush();
             }
 
             if let Some(mut buf) = s.dequeue_buffer() {
