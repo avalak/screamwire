@@ -1,32 +1,37 @@
-use std::sync::{Arc, Condvar, Mutex};
-
+//! Lightweight, lock‑free bridge for waking up the network sender when
+//! new audio data is available.
+//!
+//! Based on Linux's [`eventfd`]
+use nix::sys::eventfd::{EfdFlags, EventFd};
+use std::sync::Arc;
 #[derive(Clone)]
 pub struct StreamEventBridge {
-    state: Arc<(Mutex<bool>, Condvar)>,
+    inner: Arc<EventFd>,
 }
 
 impl StreamEventBridge {
     pub fn new() -> Self {
+        let event_fd = EventFd::from_value_and_flags(0, EfdFlags::EFD_CLOEXEC)
+            .expect("Failed to create eventfd");
+
         Self {
-            state: Arc::new((Mutex::new(false), Condvar::new())),
+            inner: Arc::new(event_fd),
         }
     }
 
     #[inline]
     pub fn notify_data_ready(&self) {
-        let (lock, cvar) = &*self.state;
-        let mut ready = lock.lock().unwrap();
-        *ready = true;
-        cvar.notify_one();
+        let _ = self.inner.write(1);
     }
 
     pub fn wait_for_data(&self) {
-        let (lock, cvar) = &*self.state;
-        let mut ready = lock.lock().unwrap();
+        // TODO: gracefull shutdown?
+        let _ = self.inner.read();
+    }
+}
 
-        while !*ready {
-            ready = cvar.wait(ready).unwrap();
-        }
-        *ready = false;
+impl Default for StreamEventBridge {
+    fn default() -> Self {
+        Self::new()
     }
 }
