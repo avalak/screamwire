@@ -29,3 +29,7 @@ harness = false
 [[bench]]
 name = "vad_benchmark"
 harness = false
+
+[[bench]]
+name = "scanner_benchmark"
+harness = false
