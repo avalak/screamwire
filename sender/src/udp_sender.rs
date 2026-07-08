@@ -1,11 +1,7 @@
 use crate::event_bridge::StreamEventBridge;
-//use crate::vad::VadConfig;
 #[allow(unused_imports)]
 use log::{debug, error, info};
-use ringbuf::{
-    //    HeapCons,
-    traits::{Consumer, Observer},
-};
+use ringbuf::traits::{Consumer, Observer};
 use screamwire_common::scream::{AUDIO_PAYLOAD_SIZE, HEADER_SIZE, PACKET_SIZE, make_header};
 use screamwire_common::types::AudioParams;
 use std::net::UdpSocket;
@@ -28,25 +24,23 @@ pub fn send_loop(
 
     loop {
         event_bridge.wait_for_data();
-        debug!("Awaken");
+        debug!("event: Data chunk ready");
 
         while consumer.occupied_len() >= AUDIO_PAYLOAD_SIZE {
-            let (slice1, slice2) = consumer.as_slices();
+            let bytes_read =
+                consumer.pop_slice(&mut packet[HEADER_SIZE..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]);
 
-            if slice1.len() >= AUDIO_PAYLOAD_SIZE {
-                packet[HEADER_SIZE..].copy_from_slice(&slice1[..AUDIO_PAYLOAD_SIZE]);
-            } else {
-                let first = slice1.len();
-                packet[HEADER_SIZE..HEADER_SIZE + first].copy_from_slice(slice1);
-                packet[HEADER_SIZE + first..HEADER_SIZE + AUDIO_PAYLOAD_SIZE]
-                    .copy_from_slice(&slice2[..AUDIO_PAYLOAD_SIZE - first]);
-            };
+            if bytes_read != AUDIO_PAYLOAD_SIZE {
+                error!(
+                    "Ringbuffer error: Expected to read {} bytes, but got {}",
+                    AUDIO_PAYLOAD_SIZE, bytes_read
+                );
+                continue;
+            }
 
             if let Err(e) = socket.send_to(&packet, target) {
                 error!("UDP send error: {}", e);
             }
-
-            consumer.skip(AUDIO_PAYLOAD_SIZE);
         }
     }
 }
