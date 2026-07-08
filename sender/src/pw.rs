@@ -16,6 +16,8 @@ use screamwire_common::pw::make_format_data;
 use screamwire_common::types::AudioParams;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Build stream properties, flags and a human-readable description.
 /// Properties are grouped hierarchically by operational priority and impact.
@@ -113,7 +115,7 @@ pub fn get_sink_names() -> Vec<String> {
 /// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
 pub fn run_audio_stream(
-    producer: impl Producer<Item = u8> + Send + 'static,
+    mut producer: impl Producer<Item = u8> + Send + 'static,
     format: AudioParams,
     target_sink: Option<String>,
     vad_config: VadConfig,
@@ -127,31 +129,39 @@ pub fn run_audio_stream(
 
     // SPA format pod
     let pod_data = make_format_data(format);
-    let pod = pipewire::spa::pod::Pod::from_bytes(&pod_data).unwrap();
+    let pod = spa::pod::Pod::from_bytes(&pod_data).unwrap();
     let mut params = [pod];
 
     // Configure properties and flags based on mode
     let (props, flags, log_desc) = stream_config(target_sink.as_deref());
 
-    // VAD
-    let vad = Vad::new(vad_config, format);
+    // VAD and atomic lock-free command variables
+    let mut vad = Vad::new(vad_config, format);
+    let needs_reset = Arc::new(AtomicBool::new(false));
+    let needs_force_idle = Arc::new(AtomicBool::new(false));
 
-    let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
+    // reset
+    let process_reset = needs_reset.clone();
+    let state_reset = needs_reset.clone();
 
-    struct StreamContext<P> {
-        producer: P,
-        vad: Vad,
-    }
-    let shared_context = Rc::new(RefCell::new(StreamContext { producer, vad }));
-    let process_context = Rc::clone(&shared_context);
-    let state_context = Rc::clone(&shared_context);
+    // idel
+    let process_force_idle = needs_force_idle.clone();
+    let state_force_idle = needs_force_idle.clone();
 
     let log_desc_for_closure = log_desc.clone();
 
     let event_bridge_clone = event_bridge.clone();
-    let _listener = stream
+    let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
+    let listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
+            if process_reset.swap(false, Ordering::Acquire) {
+                vad.reset();
+            }
+            if process_force_idle.swap(false, Ordering::Acquire) {
+                vad.force_idle();
+            }
+
             if let Some(mut buf) = s.dequeue_buffer() {
                 let datas = buf.datas_mut();
                 if let Some(data) = datas.first_mut() {
@@ -161,12 +171,10 @@ pub fn run_audio_stream(
                     if let Some(bytes) = data.data() {
                         let raw_audio = &bytes[off..off + sz];
 
-                        let mut ctx = process_context.borrow_mut();
-                        if ctx.vad.process(raw_audio) {
-                            let _ = ctx.producer.push_slice(raw_audio);
+                        if vad.process(raw_audio) {
+                            let _ = producer.push_slice(raw_audio);
                             event_bridge_clone.notify_data_ready();
                         }
-                        debug!("got data");
                     }
                 }
             }
@@ -176,26 +184,22 @@ pub fn run_audio_stream(
                 "Stream state changed from {:?} to {:?} ({})",
                 old, new, log_desc_for_closure
             );
-            let mut ctx = state_context.borrow_mut();
             match new {
                 pipewire::stream::StreamState::Streaming => {
-                    info!(
-                        "Stream started ({}) -> Flushing buffer & Resetting VAD",
+                    debug!(
+                        "Stream started ({}) -> Requesting VAD Reset",
                         log_desc_for_closure
                     );
-
-                    ctx.vad.reset();
-
+                    state_reset.store(true, Ordering::Release);
                     // TODO: flush ringbuffer?
                 }
                 pipewire::stream::StreamState::Paused
                 | pipewire::stream::StreamState::Unconnected => {
-                    info!(
-                        "Stream stopped/paused ({}) -> Forcing VAD Idle",
+                    debug!(
+                        "Stream stopped/paused ({}) -> Requesting VAD Idle",
                         log_desc_for_closure
                     );
-
-                    ctx.vad.force_idle();
+                    state_force_idle.store(true, Ordering::Release);
                 }
                 _ => {}
             }
@@ -204,8 +208,11 @@ pub fn run_audio_stream(
 
     stream.connect(spa::utils::Direction::Input, None, flags, &mut params[..])?;
 
-    info!("Initialized: {}", log_desc);
+    info!("Initialized and connected audio stream: {}", log_desc);
+
     mainloop.run();
+
+    drop(listener);
 
     Ok(())
 }
