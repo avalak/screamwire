@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod event_bridge;
 mod pw;
+mod scanners;
 mod udp_sender;
 mod vad;
 use crate::event_bridge::StreamEventBridge;
