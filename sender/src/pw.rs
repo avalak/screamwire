@@ -28,6 +28,7 @@ fn stream_config(sink_name: Option<&str>) -> (PropertiesBox, StreamFlags, String
     let mut props = PropertiesBox::new();
 
     // Common properties
+    props.insert(*pipewire::keys::NODE_ALWAYS_PROCESS, "false");
     props.insert(*pipewire::keys::APP_NAME, "ScreamWire");
     props.insert(*pipewire::keys::APP_ID, "io.github.avalak.screamwire");
     props.insert(*pipewire::keys::MEDIA_SOFTWARE, "ScreamWire");
