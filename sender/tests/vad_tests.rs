@@ -1,7 +1,5 @@
-//use super::vad::{Vad, VadConfig};
-use screamwire::vad::{Vad, VadConfig};
+use screamwire::vad::{AudioDepth, Depth16, Depth24, Depth32, Vad, VadConfig};
 use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
-use screamwire_common::types::AudioParams;
 
 /// Silence packet
 fn silent_packet(_bits: u32) -> Vec<u8> {
@@ -36,22 +34,17 @@ fn loud_packet(bits: u32, channels: u32, peak: u16) -> Vec<u8> {
 }
 
 /// Make VAD with provided config
-fn make_vad(bits: u32, threshold: u16, silence_packets: u32) -> Vad {
-    let format = AudioParams {
-        rate: 48000,
-        bits,
-        channels: 2,
-    };
+fn make_vad<D: AudioDepth>(threshold: u16, silence_packets: u32) -> Vad<D> {
     let config = VadConfig {
         threshold,
         silence_packets,
     };
-    Vad::new(config, format)
+    Vad::<D>::new(config)
 }
 
 #[test]
 fn test_silence_detected_16bit() {
-    let mut vad = make_vad(16, 1, 2);
+    let mut vad = make_vad::<Depth16>(1, 2);
     let pkt = silent_packet(16);
 
     // First silent packet – still active
@@ -65,7 +58,7 @@ fn test_silence_detected_16bit() {
 
 #[test]
 fn test_signal_detected_16bit() {
-    let mut vad = make_vad(16, 1, 2);
+    let mut vad = make_vad::<Depth16>(1, 2);
     let loud = loud_packet(16, 2, 100);
 
     // Should detect signal immediately
@@ -75,7 +68,7 @@ fn test_signal_detected_16bit() {
 
 #[test]
 fn test_signal_detected_24bit() {
-    let mut vad = make_vad(24, 1, 2);
+    let mut vad = make_vad::<Depth24>(1, 2);
     let loud = loud_packet(24, 2, 100);
 
     let send = vad.process(&loud);
@@ -84,7 +77,7 @@ fn test_signal_detected_24bit() {
 
 #[test]
 fn test_signal_detected_32bit() {
-    let mut vad = make_vad(32, 1, 2);
+    let mut vad = make_vad::<Depth32>(1, 2);
     let loud = loud_packet(32, 2, 100);
 
     let send = vad.process(&loud);
@@ -93,7 +86,7 @@ fn test_signal_detected_32bit() {
 
 #[test]
 fn test_resume_after_silence() {
-    let mut vad = make_vad(16, 10, 2);
+    let mut vad = make_vad::<Depth16>(10, 2);
     let silent = silent_packet(16);
     let loud = loud_packet(16, 2, 200);
 
@@ -109,7 +102,7 @@ fn test_resume_after_silence() {
 
 #[test]
 fn test_counter_reset_on_signal() {
-    let mut vad = make_vad(16, 10, 5);
+    let mut vad = make_vad::<Depth16>(10, 5);
     let silent = silent_packet(16);
     let loud = loud_packet(16, 2, 200);
 
@@ -126,7 +119,7 @@ fn test_counter_reset_on_signal() {
 
 #[test]
 fn test_vad_disabled_with_zero_threshold() {
-    let mut vad = make_vad(16, 0, 2); // threshold 0 disables VAD
+    let mut vad = make_vad::<Depth16>(0, 2); // threshold 0 disables VAD
     let silent = silent_packet(16);
 
     // Should always send, no matter how many silent packets
