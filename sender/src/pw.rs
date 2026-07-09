@@ -1,7 +1,9 @@
+use crate::dispatch_vad;
 use crate::event_bridge::StreamEventBridge;
-use crate::vad::{Vad, VadConfig};
-#[allow(unused_imports)]
-use log::{debug, info};
+use crate::rt_debug;
+
+use crate::vad::{DynamicVad, Vad, VadConfig, VadDisabled};
+use log::info;
 use pipewire::{
     context::ContextRc,
     init,
@@ -135,32 +137,42 @@ pub fn run_audio_stream(
     // Configure properties and flags based on mode
     let (props, flags, log_desc) = stream_config(target_sink.as_deref());
 
-    // VAD and atomic lock-free command variables
-    let mut vad = Vad::new(vad_config, format);
+    // Monomorphize VAD
+    let mut vad = if vad_config.threshold == 0 || vad_config.silence_packets == 0 {
+        DynamicVad::Disabled(VadDisabled::new(vad_config))
+    } else {
+        match format.bits {
+            8 => DynamicVad::Bits8(Vad::new(vad_config)),
+            16 => DynamicVad::Bits16(Vad::new(vad_config)),
+            24 => DynamicVad::Bits24(Vad::new(vad_config)),
+            _ => DynamicVad::Bits32(Vad::new(vad_config)),
+        }
+    };
+
     let needs_reset = Arc::new(AtomicBool::new(false));
     let needs_force_idle = Arc::new(AtomicBool::new(false));
 
-    // reset
-    let process_reset = needs_reset.clone();
-    let state_reset = needs_reset.clone();
+    let process_reset = Arc::clone(&needs_reset);
+    let state_reset = needs_reset;
 
-    // idel
-    let process_force_idle = needs_force_idle.clone();
-    let state_force_idle = needs_force_idle.clone();
+    let process_force_idle = Arc::clone(&needs_force_idle);
+    let state_force_idle = needs_force_idle;
 
-    let log_desc_for_closure = log_desc.clone();
+    let _log_desc_for_closure = log_desc.clone();
 
-    let event_bridge_clone = event_bridge.clone();
+    let process_bridge = event_bridge.clone();
+    let _state_bridge = event_bridge;
+
     let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
     let listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
             if process_reset.swap(false, Ordering::Acquire) {
-                vad.reset();
+                dispatch_vad!(&mut vad, |v| v.reset());
             }
             if process_force_idle.swap(false, Ordering::Acquire) {
-                vad.force_idle();
-                event_bridge_clone.notify_flush();
+                dispatch_vad!(&mut vad, |v| v.force_idle());
+                process_bridge.notify_flush();
             }
 
             if let Some(mut buf) = s.dequeue_buffer() {
@@ -172,33 +184,37 @@ pub fn run_audio_stream(
                     if let Some(bytes) = data.data() {
                         let raw_audio = &bytes[off..off + sz];
 
-                        if vad.process(raw_audio) {
+                        // Monomorphized call
+                        let is_active = dispatch_vad!(&mut vad, |v| v.process(raw_audio));
+
+                        if is_active {
                             let _ = producer.push_slice(raw_audio);
-                            event_bridge_clone.notify_data_ready();
+                            process_bridge.notify_data_ready();
                         }
                     }
                 }
             }
         })
-        .state_changed(move |_stream, _user_data, old, new| {
-            debug!(
-                "Stream state changed from {:?} to {:?} ({})",
-                old, new, log_desc_for_closure
+        .state_changed(move |_stream, _user_data, _old, new| {
+            rt_debug!(
+                "Stream state: {:?} -> {:?} ({})",
+                _old,
+                new,
+                _log_desc_for_closure
             );
             match new {
                 pipewire::stream::StreamState::Streaming => {
-                    debug!(
+                    rt_debug!(
                         "Stream started ({}) -> Requesting VAD Reset",
-                        log_desc_for_closure
+                        _log_desc_for_closure
                     );
                     state_reset.store(true, Ordering::Release);
-                    // TODO: flush ringbuffer?
                 }
                 pipewire::stream::StreamState::Paused
                 | pipewire::stream::StreamState::Unconnected => {
-                    debug!(
+                    rt_debug!(
                         "Stream stopped/paused ({}) -> Requesting VAD Idle",
-                        log_desc_for_closure
+                        _log_desc_for_closure
                     );
                     state_force_idle.store(true, Ordering::Release);
                 }
