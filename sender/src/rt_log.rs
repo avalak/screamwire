@@ -15,13 +15,13 @@ macro_rules! __rt_log_hidden {
 #[macro_export]
 macro_rules! rt_debug {
     ($($arg:tt)+) => {
-        $crate::__rt_log_hidden!("rt-debug", $crate::log::debug, $($arg)+);
+        $crate::__rt_log_hidden!("rt-debug", ::log::debug, $($arg)+);
     };
 }
 
 #[macro_export]
 macro_rules! rt_info {
     ($($arg:tt)+) => {
-        $crate::__rt_log_hidden!("rt-info", $crate::log::info, $($arg)+);
+        $crate::__rt_log_hidden!("rt-info", ::log::info, $($arg)+);
     };
 }
