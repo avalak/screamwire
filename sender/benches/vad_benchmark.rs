@@ -1,67 +1,44 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use screamwire::vad::{Vad, VadConfig};
+use screamwire::vad::{FullSimd, ScanStrategy, Stride1024, Vad, VadConfig};
 
-use screamwire_common::types::AudioParams;
 use std::hint::black_box;
 
-mod helpers;
-use helpers::generate_packet;
+use screamwire_common::test_utils::{BUFFER_SIZE, generate_buffer};
 
-fn bench_vad_variants(c: &mut Criterion, bits: u32) {
-    let format = AudioParams {
-        rate: 48000,
-        bits,
-        channels: 2,
-    };
+fn bench_vad_variants<D: ScanStrategy>(c: &mut Criterion) {
+    let bits = 16;
     let config = VadConfig {
+        enabled: true,
         threshold: 100,
-        silence_packets: 167,
+        max_silence_bytes: 384_000,
     };
 
-    let active_data = generate_packet(bits, 2, false, 200);
-    let silent_data = generate_packet(bits, 2, true, 0);
+    let active_data = generate_buffer(BUFFER_SIZE, bits, 2, false, 200);
+    let silent_data = generate_buffer(BUFFER_SIZE, bits, 2, true, 0);
 
     // Active signal - state is mutated across iterations.
-    c.bench_function(&format!("vad_{}bit_active_signal", bits), |b| {
-        let mut vad = Vad::new(config.clone(), format);
-        b.iter_with_setup(
-            || active_data.clone(),
-            |data| black_box(&mut vad).process(black_box(&data)),
-        )
+    let active_id = format!("vad_{}_{}bit_active_signal", D::NAME, bits);
+    c.bench_function(&active_id, |b| {
+        let mut vad = Vad::<D>::new(config.clone());
+        b.iter(|| {
+            black_box(&mut vad).process(black_box(&active_data));
+        })
     });
 
     // Pure silence - a fresh VAD is created for each iteration so the
     // benchmark covers scanning, silence counting and state transitions.
-    c.bench_function(&format!("vad_{}bit_pure_silence", bits), |b| {
-        b.iter_with_setup(
-            || {
-                let vad = Vad::new(config.clone(), format);
-                (vad, silent_data.clone())
-            },
-            |(mut vad, data)| black_box(&mut vad).process(black_box(&data)),
-        )
-    });
-
-    // "Deep sleep"
-    c.bench_function(&format!("vad_{}bit_pure_silence_sleeping", bits), |b| {
-        b.iter_with_setup(
-            || {
-                let mut vad = Vad::new(config.clone(), format);
-                for _ in 0..=config.silence_packets {
-                    vad.process(&silent_data);
-                }
-
-                (vad, silent_data.clone())
-            },
-            |(mut vad, data)| black_box(&mut vad).process(black_box(&data)),
-        )
+    let silence_id = format!("vad_{}_{}bit_pure_silence", D::NAME, bits);
+    c.bench_function(&silence_id, |b| {
+        b.iter(|| {
+            let mut vad = Vad::<D>::new(config.clone());
+            black_box(&mut vad).process(black_box(&silent_data));
+        })
     });
 }
 
 fn benchmarks(c: &mut Criterion) {
-    for bits in [8, 16, 24, 32] {
-        bench_vad_variants(c, bits);
-    }
+    bench_vad_variants::<Stride1024>(c);
+    bench_vad_variants::<FullSimd>(c);
 }
 
 criterion_group!(benches, benchmarks);

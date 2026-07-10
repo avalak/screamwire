@@ -1,14 +1,20 @@
-use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
+pub const BUFFER_SIZE: usize = 8192;
 
-/// Generate a realistic interleaved audio packet.
+/// Generate a realistic interleaved audio buffer.
 ///
-/// If `is_silent` is true the packet is filled with zeros.
+/// If `is_silent` is true the buffer is filled with zeros.
 /// Otherwise a peak is placed in the first channel every 100th frame.
-pub fn generate_packet(bits: u32, channels: u32, is_silent: bool, peak_amplitude: u16) -> Vec<u8> {
+pub fn generate_buffer(
+    packer_size: usize,
+    bits: u32,
+    channels: u32,
+    is_silent: bool,
+    peak_amplitude: u16,
+) -> Vec<u8> {
     let sample_bytes = (bits / 8) as usize;
     let frame_bytes = sample_bytes * channels as usize;
-    let num_frames = AUDIO_PAYLOAD_SIZE / frame_bytes;
-    let mut data = vec![0u8; AUDIO_PAYLOAD_SIZE];
+    let num_frames = packer_size / frame_bytes;
+    let mut data = vec![0u8; packer_size];
 
     if is_silent {
         return data;
