@@ -1,4 +1,5 @@
 use crate::event_bridge::StreamEventBridge;
+use crate::rt_debug;
 #[allow(unused_imports)]
 use log::{debug, error, info};
 use ringbuf::traits::{Consumer, Observer};
@@ -24,11 +25,10 @@ pub fn send_loop(
 
     loop {
         event_bridge.wait_for_data();
-        debug!("event: Data chunk ready");
 
         if event_bridge.swap_flush_requested() {
             consumer.clear();
-            debug!("Send loop: Flush requested. Ringbuffer cleared.");
+            rt_debug!("Send loop: Flush requested. Ringbuffer cleared.");
             continue;
         }
 
