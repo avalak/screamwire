@@ -2,9 +2,9 @@ use crate::rt_debug;
 use crate::scanners::*;
 #[allow(unused)]
 use log::{debug, info};
+use std::marker::PhantomData;
 
 // Configuration
-
 #[derive(Debug, Clone)]
 pub struct VadConfig {
     pub enabled: bool,
@@ -14,9 +14,32 @@ pub struct VadConfig {
     pub max_silence_bytes: usize,
 }
 
+pub trait ScanStrategy: Send + 'static {
+    const NAME: &'static str;
+    fn scan(packet: &[u8]) -> bool;
+}
+
+pub struct Stride1024;
+impl ScanStrategy for Stride1024 {
+    const NAME: &'static str = "quick-1024";
+    #[inline(always)]
+    fn scan(packet: &[u8]) -> bool {
+        any_strided_nonzero_1024(packet, 0)
+    }
+}
+
+pub struct FullSimd;
+impl ScanStrategy for FullSimd {
+    const NAME: &'static str = "full-simd";
+    #[inline(always)]
+    fn scan(packet: &[u8]) -> bool {
+        scan_generic_silence_simd(packet, 0)
+    }
+}
+
 /// Voice Activity Detector (Silence Detector)
 /// Monomorphized VAD with compile-time audio format dispatch.
-pub struct BitPerfectVad {
+pub struct Vad<S: ScanStrategy> {
     enabled: bool,
     #[allow(dead_code)]
     threshold: u32,
@@ -25,13 +48,16 @@ pub struct BitPerfectVad {
     // Mutable state
     active: bool,
     silent_bytes_count: usize,
+    _marker: PhantomData<S>,
 }
 
-impl BitPerfectVad {
+impl<S: ScanStrategy> Vad<S> {
     pub fn new(config: VadConfig) -> Self {
         let enabled = config.max_silence_bytes > 0;
         info!(
-            "VAD: bitperfect (SIMD, max_silence_bytes={})",
+            "VAD: {} strategy={}, max_silence_bytes={}",
+            if enabled { "enabled" } else { "disabled" },
+            S::NAME,
             config.max_silence_bytes
         );
         Self {
@@ -40,6 +66,7 @@ impl BitPerfectVad {
             max_silence_bytes: config.max_silence_bytes,
             active: true,
             silent_bytes_count: 0,
+            _marker: PhantomData,
         }
     }
 
@@ -61,7 +88,7 @@ impl BitPerfectVad {
             return true;
         }
 
-        let has_signal = scan_generic_silence_simd(packet, 0);
+        let has_signal = S::scan(packet);
 
         if self.active {
             if !has_signal {
@@ -69,6 +96,7 @@ impl BitPerfectVad {
                 if self.silent_bytes_count >= self.max_silence_bytes {
                     self.active = false;
                     self.silent_bytes_count = 0;
+                    rt_debug!("VAD: inactive");
                 }
             } else {
                 self.silent_bytes_count = 0;
@@ -76,6 +104,7 @@ impl BitPerfectVad {
         } else if has_signal {
             self.active = true;
             self.silent_bytes_count = 0;
+            rt_debug!("VAD: active");
         }
 
         self.active
@@ -109,78 +138,11 @@ impl VadDisabled {
     }
 }
 
-pub struct DirtyVad {
-    enabled: bool,
-    max_silence_bytes: usize,
-    active: bool,
-    silent_bytes_count: usize,
-}
-
-impl DirtyVad {
-    pub fn new(config: VadConfig) -> Self {
-        let enabled = config.threshold > 0 && config.max_silence_bytes > 0;
-        log::info!(
-            "DirtyVAD: {} (max_silence_bytes={})",
-            if enabled { "enabled" } else { "disabled" },
-            config.max_silence_bytes
-        );
-        Self {
-            enabled,
-            max_silence_bytes: config.max_silence_bytes,
-            active: true,
-            silent_bytes_count: 0,
-        }
-    }
-
-    #[inline(always)]
-    pub fn reset(&mut self) {
-        self.active = true;
-        self.silent_bytes_count = 0;
-    }
-
-    #[inline(always)]
-    pub fn force_idle(&mut self) {
-        self.active = false;
-        self.silent_bytes_count = 0;
-    }
-
-    /// Process a chunk of audio bytes.
-    ///
-    /// Returns `true` if the chunk should be transmitted.
-    /// Never branches on bit‑depth; threshold is ignored.
-    #[inline(always)]
-    pub fn process(&mut self, packet: &[u8]) -> bool {
-        if !self.enabled {
-            return true;
-        }
-
-        let has_signal = any_strided_nonzero(packet, 0);
-
-        if self.active {
-            if !has_signal {
-                rt_debug!("+++ silence");
-                self.silent_bytes_count += packet.len();
-                if self.silent_bytes_count >= self.max_silence_bytes {
-                    self.active = false;
-                    self.silent_bytes_count = 0;
-                }
-            } else {
-                self.silent_bytes_count = 0;
-            }
-        } else if has_signal {
-            self.active = true;
-            self.silent_bytes_count = 0;
-        }
-
-        self.active
-    }
-}
-
 /// Monomorphized VAD dispatch
 pub enum DynamicVad {
     Disabled(VadDisabled),
-    Dirty(DirtyVad),
-    BitPerfect(BitPerfectVad),
+    Quick1024(Vad<Stride1024>),
+    FullSimd(Vad<FullSimd>),
 }
 
 #[macro_export]
@@ -188,8 +150,8 @@ macro_rules! dispatch_vad {
     ($vad:expr, |$v:ident| $body:expr) => {
         match $vad {
             $crate::vad::DynamicVad::Disabled($v) => $body,
-            $crate::vad::DynamicVad::Dirty($v) => $body,
-            $crate::vad::DynamicVad::BitPerfect($v) => $body,
+            $crate::vad::DynamicVad::Quick1024($v) => $body,
+            $crate::vad::DynamicVad::FullSimd($v) => $body,
         }
     };
 }

@@ -75,6 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_silence_bytes = (cfg.vad_silence * bytes_per_second as f64) as usize;
 
     let vad_config = vad::VadConfig {
+        enabled: cfg.vad_enable,
         threshold: if cfg.vad_enable { cfg.vad_threshold } else { 0 },
         max_silence_bytes,
     };
