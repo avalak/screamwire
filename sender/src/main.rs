@@ -2,6 +2,7 @@ use clap::Parser;
 use log::{debug, info};
 use ringbuf::{HeapRb, traits::Split};
 use std::thread;
+
 mod cli;
 mod config;
 mod event_bridge;
@@ -10,9 +11,11 @@ mod rt_log;
 mod scanners;
 mod udp_sender;
 mod vad;
+
 use crate::event_bridge::StreamEventBridge;
 use screamwire_common::scream::PACKET_SIZE;
 use screamwire_common::types::AudioParams;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
 
@@ -52,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("ScreamWire sender starting...");
 
     // Create the ring buffer and start the network sender thread
-    let buffer_size = PACKET_SIZE * cfg.ring_buffer_packets;
+    let buffer_size = PACKET_SIZE * 10; // TODO: remove magick number
     let rb = HeapRb::<u8>::new(buffer_size);
     let (producer, consumer) = rb.split();
 
@@ -66,16 +69,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         channels: cfg.channels,
     };
 
-    let vad_config = vad::VadConfig {
-        threshold: cfg.vad_threshold,
-        silence_packets: cfg.silence_packets,
-        //active_sleep_ms: cfg.active_sleep_ms,
-        //idle_sleep_ms: cfg.idle_sleep_ms,
-    };
-    // TODO: refactor VAD
-    //let vad_config_clone = vad_config.clone();
+    // Calculate max silence bytes from seconds + audio params
+    let frame_bytes = (cfg.bits as usize / 8) * cfg.channels as usize;
+    let bytes_per_second = cfg.rate as usize * frame_bytes;
+    let max_silence_bytes = (cfg.vad_silence * bytes_per_second as f64) as usize;
 
+    let vad_config = vad::VadConfig {
+        threshold: if cfg.vad_enable { cfg.vad_threshold } else { 0 },
+        max_silence_bytes,
+    };
     let net_bridge = event_bridge.clone();
+
     // Start sender thread
     let _sender_thread = thread::spawn(move || {
         udp_sender::send_loop(consumer, target_addr, bind_addr, format, net_bridge)

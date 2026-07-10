@@ -2,7 +2,6 @@ use crate::rt_debug;
 use crate::scanners::*;
 #[allow(unused)]
 use log::{debug, info};
-use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
 use std::marker::PhantomData;
 
 /// Compile-time audio depth dispatch
@@ -52,7 +51,9 @@ impl AudioDepth for Depth32 {
 #[derive(Debug, Clone)]
 pub struct VadConfig {
     pub threshold: u16,
-    pub silence_packets: u32,
+    /// Maximum silence duration in bytes.
+    /// rate * (bits/8) * channels * silence_seconds
+    pub max_silence_bytes: usize,
 }
 
 /// Voice Activity Detector (Silence Detector)
@@ -71,21 +72,20 @@ pub struct Vad<D: AudioDepth> {
 
 impl<D: AudioDepth> Vad<D> {
     pub fn new(config: VadConfig) -> Self {
-        let enabled = config.threshold > 0 && config.silence_packets > 0;
-        let max_silence_bytes = config.silence_packets as usize * AUDIO_PAYLOAD_SIZE;
+        let enabled = config.threshold > 0 && config.max_silence_bytes > 0;
 
         info!(
-            "VAD initialized for PipeWire thread: {} (bits={}, threshold={}, max_silence_bytes={})",
+            "VAD: {} (bits={}, threshold={}, max_silence_bytes={})",
             if enabled { "enabled" } else { "disabled" },
             D::BITS,
             config.threshold,
-            max_silence_bytes
+            config.max_silence_bytes
         );
 
         Self {
             enabled,
             threshold: config.threshold as u32,
-            max_silence_bytes,
+            max_silence_bytes: config.max_silence_bytes,
             active: true,
             silent_bytes_count: 0,
             _marker: PhantomData,

@@ -139,7 +139,7 @@ pub fn run_audio_stream(
     let (props, flags, log_desc) = stream_config(target_sink.as_deref());
 
     // Monomorphize VAD
-    let mut vad = if vad_config.threshold == 0 || vad_config.silence_packets == 0 {
+    let mut vad = if vad_config.threshold == 0 || vad_config.max_silence_bytes == 0 {
         DynamicVad::Disabled(VadDisabled::new(vad_config))
     } else {
         match format.bits {
