@@ -181,24 +181,26 @@ pub fn run_audio_stream(
                 process_bridge.notify_flush();
             }
 
-            if let Some(mut buf) = s.dequeue_buffer() {
-                let datas = buf.datas_mut();
-                if let Some(data) = datas.first_mut() {
-                    let chunk = data.chunk();
-                    let off = chunk.offset() as usize;
-                    let sz = chunk.size() as usize;
-                    if let Some(bytes) = data.data() {
-                        let raw_audio = &bytes[off..off + sz];
+            let mut should_notify = false;
+            while let Some(mut buf) = s.dequeue_buffer() {
+                let Some(data) = buf.datas_mut().first_mut() else {
+                    continue;
+                };
+                let off = data.chunk().offset() as usize;
+                let sz = data.chunk().size() as usize;
+                let Some(bytes) = data.data() else { continue };
+                // Bufer from PipeWire. Should be safe
+                let raw_audio = &bytes[off..off + sz];
 
-                        // Monomorphized call
-                        let is_active = dispatch_vad!(&mut vad, |v| v.process(raw_audio));
-
-                        if is_active {
-                            let _ = producer.push_slice(raw_audio);
-                            process_bridge.notify_data_ready();
-                        }
-                    }
+                // Monomorphized call
+                let is_active = dispatch_vad!(&mut vad, |v| v.process(raw_audio));
+                if is_active {
+                    producer.push_slice(raw_audio);
+                    should_notify = true;
                 }
+            }
+            if should_notify {
+                process_bridge.notify_data_ready();
             }
         })
         .state_changed(move |_stream, _user_data, _old, new| {
