@@ -13,8 +13,9 @@ mod udp_sender;
 mod vad;
 
 use crate::event_bridge::StreamEventBridge;
-use screamwire_common::scream::PACKET_SIZE;
 use screamwire_common::types::AudioParams;
+
+use crate::config::BASE_BUFFER_SIZE;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
@@ -55,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("ScreamWire sender starting...");
 
     // Create the ring buffer and start the network sender thread
-    let buffer_size = PACKET_SIZE * 10; // TODO: remove magick number
+    let buffer_size = BASE_BUFFER_SIZE * 10;
     let rb = HeapRb::<u8>::new(buffer_size);
     let (producer, consumer) = rb.split();
 

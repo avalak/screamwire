@@ -3,6 +3,8 @@ use screamwire_common::types::{DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub const BASE_BUFFER_SIZE: usize = 8192;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     // Network
