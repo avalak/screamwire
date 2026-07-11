@@ -3,7 +3,7 @@ use crate::event_bridge::StreamEventBridge;
 use crate::rt_debug;
 
 use crate::vad::{DynamicVad, Vad, VadConfig, VadDisabled};
-use log::info;
+use log::{error, info};
 use pipewire::{
     context::ContextRc,
     init,
@@ -163,7 +163,13 @@ pub fn run_audio_stream(
     let process_bridge = event_bridge.clone();
     let _state_bridge = event_bridge;
 
-    let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
+    let stream = match StreamRc::new(core.clone(), "screamwire-stream", props) {
+        Ok(s) => s,
+        Err(e) => {
+            info!("Failed to create stream: {}", e);
+            return Err(e.into());
+        }
+    };
     let listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
@@ -217,6 +223,9 @@ pub fn run_audio_stream(
                         _log_desc_for_closure
                     );
                     state_force_idle.store(true, Ordering::Release);
+                }
+                pipewire::stream::StreamState::Error(_) => {
+                    error!("Stream error");
                 }
                 _ => {}
             }
