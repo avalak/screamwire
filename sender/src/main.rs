@@ -29,8 +29,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfg = config::Config::load(&cli)?;
     cfg.apply_cli_overrides(&cli);
 
+    pipewire::init();
+    let mainloop = pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create main loop");
+    let context =
+        pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create context");
+
     // Retrieve the list of available sinks
-    let available_sinks = pw::get_sink_names();
+    let available_sinks = pw::get_sink_names(mainloop.clone(), context.clone());
 
     if cli.list_sinks {
         if available_sinks.is_empty() {
@@ -101,6 +106,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         info!("Using existing sink: {}", name);
         pw::run_audio_stream(
+            mainloop,
+            context,
             producer,
             format,
             Some(name.clone()),
@@ -108,7 +115,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             event_bridge,
         )?;
     } else {
-        pw::run_audio_stream(producer, format, None, vad_config, event_bridge)?;
+        pw::run_audio_stream(
+            mainloop,
+            context,
+            producer,
+            format,
+            None,
+            vad_config,
+            event_bridge,
+        )?;
     }
 
     Ok(())

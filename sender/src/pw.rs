@@ -6,7 +6,6 @@ use crate::vad::{DynamicVad, Vad, VadConfig, VadDisabled};
 use log::{error, info};
 use pipewire::{
     context::ContextRc,
-    init,
     main_loop::MainLoopRc,
     properties::PropertiesBox,
     spa,
@@ -67,11 +66,7 @@ fn stream_config(sink_name: Option<&str>) -> (PropertiesBox, StreamFlags, String
 
 /// Return a list of all `node.name` values for PipeWire nodes with
 /// `media.class = "Audio/Sink"`.
-pub fn get_sink_names() -> Vec<String> {
-    init();
-
-    let mainloop = MainLoopRc::new(None).expect("Failed to create main loop");
-    let context = ContextRc::new(&mainloop, None).expect("Failed to create context");
+pub fn get_sink_names(mainloop: MainLoopRc, context: ContextRc) -> Vec<String> {
     let core = context.connect_rc(None).expect("Failed to connect to core");
     let registry = core.get_registry().expect("Failed to get registry");
 
@@ -118,16 +113,14 @@ pub fn get_sink_names() -> Vec<String> {
 /// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
 pub fn run_audio_stream(
+    mainloop: MainLoopRc,
+    context: ContextRc,
     mut producer: impl Producer<Item = u8> + Send + 'static,
     format: AudioParams,
     target_sink: Option<String>,
     vad_config: VadConfig,
     event_bridge: StreamEventBridge,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    init();
-
-    let mainloop = MainLoopRc::new(None)?;
-    let context = ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
 
     // SPA format pod
