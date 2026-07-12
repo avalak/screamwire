@@ -20,6 +20,43 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[derive(Clone)]
+struct StreamStateFlags {
+    reset: Arc<AtomicBool>,
+    idle: Arc<AtomicBool>,
+}
+
+impl StreamStateFlags {
+    fn new() -> Self {
+        Self {
+            reset: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[inline(always)]
+    fn request_reset(&self) {
+        self.idle.store(false, Ordering::Release);
+        self.reset.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    fn request_idle(&self) {
+        self.reset.store(false, Ordering::Release);
+        self.idle.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    fn take_reset(&self) -> bool {
+        self.reset.swap(false, Ordering::Acquire)
+    }
+
+    #[inline(always)]
+    fn take_idle(&self) -> bool {
+        self.idle.swap(false, Ordering::Acquire)
+    }
+}
+
 /// Build stream properties, flags and a human-readable description.
 /// Properties are grouped hierarchically by operational priority and impact.
 #[inline]
@@ -137,24 +174,16 @@ pub fn run_audio_stream(
 
     // Configure properties and flags based on mode
     let (props, flags, log_desc) = make_stream_config(format, target_sink.as_deref());
+    let _log_desc_for_closure = log_desc.clone();
 
     // Monomorphize VAD
     let mut vad = DynamicVad::from_config(vad_config);
 
-    let needs_reset = Arc::new(AtomicBool::new(false));
-    let needs_force_idle = Arc::new(AtomicBool::new(false));
+    // Stream logic
+    let state_flags = StreamStateFlags::new();
+    let process_flags = state_flags.clone();
 
-    let process_reset = Arc::clone(&needs_reset);
-    let state_reset = needs_reset;
-
-    let process_force_idle = Arc::clone(&needs_force_idle);
-    let state_force_idle = needs_force_idle;
-
-    let _log_desc_for_closure = log_desc.clone();
-
-    let process_bridge = event_bridge.clone();
-    let _state_bridge = event_bridge;
-
+    // Stream
     let stream = match StreamRc::new(core.clone(), "screamwire-stream", props) {
         Ok(s) => s,
         Err(e) => {
@@ -165,12 +194,12 @@ pub fn run_audio_stream(
     let listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
-            if process_reset.swap(false, Ordering::Acquire) {
-                dispatch_vad!(&mut vad, |v| v.reset());
-            }
-            if process_force_idle.swap(false, Ordering::Acquire) {
+            if process_flags.take_idle() {
                 dispatch_vad!(&mut vad, |v| v.force_idle());
-                process_bridge.notify_flush();
+                event_bridge.notify_flush();
+            }
+            if process_flags.take_reset() {
+                dispatch_vad!(&mut vad, |v| v.reset());
             }
 
             let mut should_notify = false;
@@ -192,7 +221,7 @@ pub fn run_audio_stream(
                 }
             }
             if should_notify {
-                process_bridge.notify_data_ready();
+                event_bridge.notify_data_ready();
             }
         })
         .state_changed(move |_stream, _user_data, _old, new| {
@@ -204,19 +233,11 @@ pub fn run_audio_stream(
             );
             match new {
                 pipewire::stream::StreamState::Streaming => {
-                    rt_debug!(
-                        "Stream started ({}) -> Requesting VAD Reset",
-                        _log_desc_for_closure
-                    );
-                    state_reset.store(true, Ordering::Release);
+                    state_flags.request_reset();
                 }
                 pipewire::stream::StreamState::Paused
                 | pipewire::stream::StreamState::Unconnected => {
-                    rt_debug!(
-                        "Stream stopped/paused ({}) -> Requesting VAD Idle",
-                        _log_desc_for_closure
-                    );
-                    state_force_idle.store(true, Ordering::Release);
+                    state_flags.request_idle();
                 }
                 pipewire::stream::StreamState::Error(_) => {
                     error!("Stream error");
