@@ -21,25 +21,37 @@ pub fn scan_generic_silence_simd(packet: &[u8], _threshold: u32) -> bool {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
+type Word = u64;
+#[cfg(target_pointer_width = "64")]
+const WORD_BYTES: usize = 8;
+#[cfg(target_pointer_width = "32")]
+type Word = u32;
+#[cfg(target_pointer_width = "32")]
+const WORD_BYTES: usize = 4;
+
 /// Stride scan
 #[inline(always)]
 pub fn any_strided_nonzero_1024(packet: &[u8], _threshold: u32) -> bool {
     let len = packet.len();
     let mut i = 0;
 
-    // Step: 8x128 == 1024
-    while i + 896 < len {
+    // Full S16_LE, S24_LE, S32_LE support
+    // Step: 4x256 == 1024
+    while i + 1024 <= len {
         unsafe {
-            let b0 = *packet.get_unchecked(i);
-            let b1 = *packet.get_unchecked(i + 128);
-            let b2 = *packet.get_unchecked(i + 256);
-            let b3 = *packet.get_unchecked(i + 384);
-            let b4 = *packet.get_unchecked(i + 512);
-            let b5 = *packet.get_unchecked(i + 640);
-            let b6 = *packet.get_unchecked(i + 768);
-            let b7 = *packet.get_unchecked(i + 896);
+            let ptr = packet.as_ptr().add(i);
+            let p0 = ptr as *const Word;
+            let p1 = ptr.add(256) as *const Word;
+            let p2 = ptr.add(512) as *const Word;
+            let p3 = ptr.add(768) as *const Word;
 
-            if (b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7) != 0 {
+            if (p0.read_unaligned()
+                | p1.read_unaligned()
+                | p2.read_unaligned()
+                | p3.read_unaligned())
+                != 0
+            {
                 return true;
             }
         }
@@ -47,11 +59,14 @@ pub fn any_strided_nonzero_1024(packet: &[u8], _threshold: u32) -> bool {
     }
 
     // Tail
-    while i < len {
-        if unsafe { *packet.get_unchecked(i) } != 0 {
-            return true;
+    while i + WORD_BYTES <= len {
+        unsafe {
+            let p = packet.as_ptr().add(i) as *const Word;
+            if p.read_unaligned() != 0 {
+                return true;
+            }
         }
-        i += 128;
+        i += 64;
     }
 
     false
