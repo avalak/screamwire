@@ -23,7 +23,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Build stream properties, flags and a human-readable description.
 /// Properties are grouped hierarchically by operational priority and impact.
 #[inline]
-fn stream_config(sink_name: Option<&str>) -> (PropertiesBox, StreamFlags, String) {
+fn make_stream_config(
+    format: AudioParams,
+    sink_name: Option<&str>,
+) -> (PropertiesBox, StreamFlags, String) {
     let mut props = PropertiesBox::new();
 
     // Common properties
@@ -34,6 +37,10 @@ fn stream_config(sink_name: Option<&str>) -> (PropertiesBox, StreamFlags, String
     props.insert(*pipewire::keys::NODE_DESCRIPTION, "ScreamWire Sender");
     props.insert(*pipewire::keys::MEDIA_TYPE, "Audio");
     props.insert(*pipewire::keys::MEDIA_ROLE, "Production");
+    props.insert(
+        *pipewire::keys::NODE_LATENCY,
+        format!("{}/{}", 256, format.rate),
+    ); // TODO: replace magic number with config
 
     if let Some(name) = sink_name {
         // Capture from an existing sink
@@ -129,7 +136,7 @@ pub fn run_audio_stream(
     let mut params = [pod];
 
     // Configure properties and flags based on mode
-    let (props, flags, log_desc) = stream_config(target_sink.as_deref());
+    let (props, flags, log_desc) = make_stream_config(format, target_sink.as_deref());
 
     // Monomorphize VAD
     let mut vad = if !vad_config.enabled || vad_config.max_silence_bytes == 0 {
