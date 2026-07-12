@@ -44,6 +44,10 @@ pub struct Cli {
     #[arg(long)]
     pub vad_enable: Option<bool>,
 
+    /// VAD mode: off, quick-1024, full-simd
+    #[arg(long)]
+    pub vad_mode: Option<String>,
+
     /// Silence duration in seconds before pausing transmission (default: 1.0)
     #[arg(long)]
     pub vad_silence: Option<f64>,

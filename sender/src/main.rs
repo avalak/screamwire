@@ -82,6 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vad_config = vad::VadConfig {
         enabled: cfg.vad_enable,
+        mode: cfg.vad_mode,
         threshold: if cfg.vad_enable { cfg.vad_threshold } else { 0 },
         max_silence_bytes,
     };

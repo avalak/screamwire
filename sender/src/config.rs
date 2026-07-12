@@ -28,6 +28,9 @@ pub struct Config {
     #[serde(default = "default_vad_enable")]
     pub vad_enable: bool,
 
+    #[serde(default = "default_vad_mode")]
+    pub vad_mode: String,
+
     #[serde(default = "default_vad_threshold")]
     pub vad_threshold: u16,
 
@@ -58,6 +61,10 @@ fn default_channels() -> u32 {
 
 fn default_vad_enable() -> bool {
     true
+}
+
+fn default_vad_mode() -> String {
+    "quick".to_string()
 }
 
 fn default_vad_threshold() -> u16 {
@@ -104,6 +111,7 @@ impl Config {
                 bits: default_bits(),
                 channels: default_channels(),
                 vad_enable: default_vad_enable(),
+                vad_mode: default_vad_mode(),
                 vad_threshold: default_vad_threshold(),
                 vad_silence: default_vad_silence(),
                 sink_name: None,
@@ -130,6 +138,9 @@ impl Config {
         }
         if let Some(enable) = cli.vad_enable {
             self.vad_enable = enable;
+        }
+        if let Some(ref mode) = cli.vad_mode {
+            self.vad_mode = mode.clone();
         }
         if let Some(ref sink) = cli.sink {
             self.sink_name = Some(sink.clone());
@@ -162,6 +173,7 @@ impl Config {
             bits: default_bits(),
             channels: default_channels(),
             vad_enable: default_vad_enable(),
+            vad_mode: default_vad_mode(),
             vad_threshold: default_vad_threshold(),
             vad_silence: default_vad_silence(),
             sink_name: None,

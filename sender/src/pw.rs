@@ -2,7 +2,7 @@ use crate::dispatch_vad;
 use crate::event_bridge::StreamEventBridge;
 use crate::rt_debug;
 
-use crate::vad::{DynamicVad, Vad, VadConfig, VadDisabled};
+use crate::vad::{DynamicVad, VadConfig};
 use log::{error, info};
 use pipewire::{
     context::ContextRc,
@@ -139,15 +139,7 @@ pub fn run_audio_stream(
     let (props, flags, log_desc) = make_stream_config(format, target_sink.as_deref());
 
     // Monomorphize VAD
-    let mut vad = if !vad_config.enabled || vad_config.max_silence_bytes == 0 {
-        DynamicVad::Disabled(VadDisabled::new(vad_config))
-    } else {
-        match vad_config.threshold {
-            0 => DynamicVad::Disabled(VadDisabled::new(vad_config)),
-            1 => DynamicVad::Quick1024(Vad::new(vad_config)),
-            _ => DynamicVad::FullSimd(Vad::new(vad_config)),
-        }
-    };
+    let mut vad = DynamicVad::from_config(vad_config);
 
     let needs_reset = Arc::new(AtomicBool::new(false));
     let needs_force_idle = Arc::new(AtomicBool::new(false));

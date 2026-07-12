@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 #[derive(Debug, Clone)]
 pub struct VadConfig {
     pub enabled: bool,
+    pub mode: String,
     pub threshold: u16,
     /// Maximum silence duration in bytes.
     /// rate * (bits/8) * channels * silence_seconds
@@ -143,6 +144,20 @@ pub enum DynamicVad {
     Disabled(VadDisabled),
     Quick1024(Vad<Stride1024>),
     FullSimd(Vad<FullSimd>),
+}
+
+impl DynamicVad {
+    pub fn from_config(config: VadConfig) -> Self {
+        if !config.enabled || config.max_silence_bytes == 0 {
+            return DynamicVad::Disabled(VadDisabled::new(config));
+        }
+        let mode = config.mode.trim().to_lowercase();
+        match mode.as_str() {
+            Stride1024::NAME => DynamicVad::Quick1024(Vad::new(config)),
+            FullSimd::NAME => DynamicVad::FullSimd(Vad::new(config)),
+            _ => DynamicVad::Disabled(VadDisabled::new(config)),
+        }
+    }
 }
 
 #[macro_export]
