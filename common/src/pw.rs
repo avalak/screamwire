@@ -1,4 +1,3 @@
-use crate::scream::AUDIO_PAYLOAD_SIZE;
 use crate::types::AudioParams;
 use pipewire::spa;
 
@@ -55,7 +54,8 @@ pub fn make_format_data(format: AudioParams) -> Vec<u8> {
 /// Build a serialized SPA buffers parameter that requests two buffers
 /// with a block size of one Scream audio payload (1152 bytes).
 pub fn make_buffers_data() -> Vec<u8> {
-    let payload_size = AUDIO_PAYLOAD_SIZE as i32;
+    // NOTE: this value seems good for receiver (AUDIO_PAYLOAD_SIZE * 4)
+    let payload_size = 4608; //4320;
 
     let obj = spa::pod::Object {
         type_: spa::sys::SPA_TYPE_OBJECT_ParamBuffers,
@@ -65,7 +65,7 @@ pub fn make_buffers_data() -> Vec<u8> {
             spa::pod::Property {
                 key: spa::sys::SPA_PARAM_BUFFERS_buffers,
                 flags: spa::pod::PropertyFlags::empty(),
-                value: spa::pod::Value::Int(2),
+                value: spa::pod::Value::Int(4),
             },
             // 1 data block per buffer
             spa::pod::Property {
@@ -86,7 +86,7 @@ pub fn make_buffers_data() -> Vec<u8> {
                         step: 0,
                     },
                 ))),
-            },
+            }, /* */
         ],
     };
 
