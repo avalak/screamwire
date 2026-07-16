@@ -9,7 +9,7 @@ const BUFFER_SIZE: usize = 4096;
 fn make_vad_config(max_silence_bytes: usize) -> VadConfig {
     VadConfig {
         enabled: true,
-        mode:  String::from(""),
+        mode: String::from(""),
         threshold: 1, // unused
         max_silence_bytes,
     }

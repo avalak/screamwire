@@ -2,7 +2,6 @@ use screamwire_common::scream::{channel_map, make_header, parse_header};
 use screamwire_common::types::AudioParams;
 
 /// Helpers
-
 /// Test `make_header`` function
 macro_rules! test_make_header {
     ($($name:ident: rate=$rate:expr, bits=$bits:expr, channels=$channels:expr => $expected:expr;)*) => {

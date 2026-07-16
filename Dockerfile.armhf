@@ -38,4 +38,3 @@ ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS="-C target-cpu=cortex-a
 
 # Usage:
 # cross build --bin screamwire-receiver --target=armv7-unknown-linux-gnueabihf --release
-
