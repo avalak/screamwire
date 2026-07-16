@@ -1,159 +1,172 @@
-#[allow(unused_imports)]
-use log::{debug, error, info};
-use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
-use screamwire_common::types::AudioParams;
+use crate::rt_debug;
+use crate::scanners::*;
+#[allow(unused)]
+use log::{debug, info};
+use std::marker::PhantomData;
 
+// Configuration
 #[derive(Debug, Clone)]
 pub struct VadConfig {
+    pub enabled: bool,
+    pub mode: String,
     pub threshold: u16,
-    pub silence_packets: u32,
-    pub active_sleep_ms: u64,
-    pub idle_sleep_ms: u64,
+    /// Maximum silence duration in bytes.
+    /// rate * (bits/8) * channels * silence_seconds
+    pub max_silence_bytes: usize,
 }
 
-/// Voice Activity Detector with integrated sleep policy.
-///
-/// When `threshold == 0` or `silence_packets == 0`, VAD is disabled:
-/// every packet is sent and the active sleep duration is used.
-pub struct Vad {
+pub trait ScanStrategy: Send + 'static {
+    const NAME: &'static str;
+    fn scan(packet: &[u8]) -> bool;
+}
+
+pub struct Stride1024;
+impl ScanStrategy for Stride1024 {
+    const NAME: &'static str = "quick-1024";
+    #[inline(always)]
+    fn scan(packet: &[u8]) -> bool {
+        any_strided_nonzero_1024(packet, 0)
+    }
+}
+
+pub struct FullSimd;
+impl ScanStrategy for FullSimd {
+    const NAME: &'static str = "full-simd";
+    #[inline(always)]
+    fn scan(packet: &[u8]) -> bool {
+        scan_generic_silence_simd(packet, 0)
+    }
+}
+
+/// Voice Activity Detector (Silence Detector)
+/// Monomorphized VAD with compile-time audio format dispatch.
+pub struct Vad<S: ScanStrategy> {
     enabled: bool,
+    #[allow(dead_code)]
     threshold: u32,
-    silence_packets: u32,
+    max_silence_bytes: usize,
 
+    // Mutable state
     active: bool,
-    silent_count: u32,
-
-    // Sleep durations (milliseconds)
-    active_sleep_ms: u64,
-    idle_sleep_ms: u64,
-    /// Current sleep duration, updated only on state transitions.
-    sleep_ms: u64,
-    format: AudioParams,
+    silent_bytes_count: usize,
+    _marker: PhantomData<S>,
 }
 
-impl Vad {
-    pub fn new(config: VadConfig, format: AudioParams) -> Self {
-        let enabled = config.threshold > 0 && config.silence_packets > 0;
-
-        let frame_bytes = format.frame_bytes();
-        // Calculate packet and silence duration for logging
-        let packet_duration_ms =
-            (AUDIO_PAYLOAD_SIZE as f64 / frame_bytes as f64 / format.rate as f64) * 1000.0;
-        let silence_duration_ms = packet_duration_ms * config.silence_packets as f64;
-
+impl<S: ScanStrategy> Vad<S> {
+    pub fn new(config: VadConfig) -> Self {
+        let enabled = config.max_silence_bytes > 0;
         info!(
-            "VAD initialised: {} (threshold={}, silence_packets={}, packet={:.1} ms, silence≈{:.0} ms)",
+            "VAD: {} strategy={}, max_silence_bytes={}",
             if enabled { "enabled" } else { "disabled" },
-            config.threshold,
-            config.silence_packets,
-            packet_duration_ms,
-            silence_duration_ms
+            S::NAME,
+            config.max_silence_bytes
         );
-
-        Vad {
+        Self {
             enabled,
             threshold: config.threshold as u32,
-            silence_packets: config.silence_packets,
+            max_silence_bytes: config.max_silence_bytes,
             active: true,
-            silent_count: 0,
-            active_sleep_ms: config.active_sleep_ms,
-            idle_sleep_ms: config.idle_sleep_ms,
-            sleep_ms: config.active_sleep_ms,
-            format,
+            silent_bytes_count: 0,
+            _marker: PhantomData,
         }
     }
 
-    /// Analyse a raw audio packet (1152 bytes, 16/24/32‑bit LE interleaved).
-    ///
-    /// Returns `(should_send, sleep_ms)`.
-    /// - `should_send`: true if the packet should be transmitted.
-    /// - `sleep_ms`: recommended sleep duration for the next idle wait.
-    pub fn process(&mut self, packet: &[u8]) -> (bool, u64) {
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.active = true;
+        self.silent_bytes_count = 0;
+    }
+
+    #[inline(always)]
+    pub fn force_idle(&mut self) {
+        self.active = false;
+        self.silent_bytes_count = 0;
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, packet: &[u8]) -> bool {
         if !self.enabled {
-            return (true, self.sleep_ms);
+            return true;
         }
 
-        let has_signal = match self.format.bits {
-            16 => self.scan_16bit(packet),
-            24 => self.scan_24bit(packet),
-            32 => self.scan_32bit(packet),
-            8 => self.scan_8bit(packet), // normally not used
-            _ => false,
-        };
+        let has_signal = S::scan(packet);
 
         if self.active {
             if !has_signal {
-                self.silent_count += 1;
-                if self.silent_count >= self.silence_packets {
+                self.silent_bytes_count += packet.len();
+                if self.silent_bytes_count >= self.max_silence_bytes {
                     self.active = false;
-                    self.silent_count = 0;
-                    self.sleep_ms = self.idle_sleep_ms; // switch to idle sleep
-                    debug!("VAD: silence detected, pausing TX");
+                    self.silent_bytes_count = 0;
+                    rt_debug!("VAD: inactive");
                 }
             } else {
-                self.silent_count = 0;
+                self.silent_bytes_count = 0;
             }
         } else if has_signal {
             self.active = true;
-            self.silent_count = 0;
-            self.sleep_ms = self.active_sleep_ms; // switch back to active sleep
-            debug!("VAD: audio resumed, restarting TX");
+            self.silent_bytes_count = 0;
+            rt_debug!("VAD: active");
         }
 
-        (self.active, self.sleep_ms)
+        self.active
+    }
+}
+
+/// Disabled VAD: stream-only control, passes everything
+pub struct VadDisabled {
+    active: bool,
+}
+
+impl VadDisabled {
+    pub fn new(_config: VadConfig) -> Self {
+        info!("VAD: disabled");
+        Self { active: true }
     }
 
-    // Bit‑depth‑specific scanners
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.active = true;
+    }
 
-    /// 16‑bit: uses `align_to` to let the compiler auto‑vectorise.
-    fn scan_16bit(&self, packet: &[u8]) -> bool {
-        let (prefix, samples, suffix) = unsafe { packet.align_to::<i16>() };
+    #[inline(always)]
+    pub fn force_idle(&mut self) {
+        self.active = false;
+    }
 
-        if !prefix.is_empty() || !suffix.is_empty() {
-            return packet.chunks_exact(2).any(|ch| {
-                let s = i16::from_le_bytes([ch[0], ch[1]]);
-                (s as i32).unsigned_abs() > self.threshold
-            });
+    #[inline(always)]
+    pub fn process(&mut self, _packet: &[u8]) -> bool {
+        self.active
+    }
+}
+
+/// Monomorphized VAD dispatch
+pub enum DynamicVad {
+    Disabled(VadDisabled),
+    Quick1024(Vad<Stride1024>),
+    FullSimd(Vad<FullSimd>),
+}
+
+impl DynamicVad {
+    pub fn from_config(config: VadConfig) -> Self {
+        if !config.enabled || config.max_silence_bytes == 0 {
+            return DynamicVad::Disabled(VadDisabled::new(config));
         }
-
-        samples
-            .iter()
-            .any(|&s| (s as i32).unsigned_abs() > self.threshold)
-    }
-
-    /// 32‑bit: same as 16-bit
-    fn scan_32bit(&self, packet: &[u8]) -> bool {
-        let (prefix, samples, suffix) = unsafe { packet.align_to::<i32>() };
-
-        if !prefix.is_empty() || !suffix.is_empty() {
-            return packet.chunks_exact(4).any(|ch| {
-                let s = i32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
-                s.unsigned_abs() > self.threshold
-            });
+        let mode = config.mode.trim().to_lowercase();
+        match mode.as_str() {
+            Stride1024::NAME => DynamicVad::Quick1024(Vad::new(config)),
+            FullSimd::NAME => DynamicVad::FullSimd(Vad::new(config)),
+            _ => DynamicVad::Disabled(VadDisabled::new(config)),
         }
-
-        samples.iter().any(|&s| s.unsigned_abs() > self.threshold)
     }
+}
 
-    /// 24‑bit
-    fn scan_24bit(&self, packet: &[u8]) -> bool {
-        packet.chunks_exact(3).any(|ch| {
-            let raw = u32::from_le_bytes([ch[0], ch[1], ch[2], 0]);
-
-            let sample = if (raw & 0x0080_0000) != 0 {
-                (raw | 0xFF00_0000) as i32
-            } else {
-                raw as i32
-            };
-
-            sample.unsigned_abs() > self.threshold
-        })
-    }
-
-    /// 8‑bit; normally not used
-    fn scan_8bit(&self, packet: &[u8]) -> bool {
-        packet
-            .iter()
-            .any(|&b| (b as i8 as i32).unsigned_abs() > self.threshold)
-    }
+#[macro_export]
+macro_rules! dispatch_vad {
+    ($vad:expr, |$v:ident| $body:expr) => {
+        match $vad {
+            $crate::vad::DynamicVad::Disabled($v) => $body,
+            $crate::vad::DynamicVad::Quick1024($v) => $body,
+            $crate::vad::DynamicVad::FullSimd($v) => $body,
+        }
+    };
 }

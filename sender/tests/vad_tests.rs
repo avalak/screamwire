@@ -1,139 +1,169 @@
-//use super::vad::{Vad, VadConfig};
-use screamwire::vad::{Vad, VadConfig};
-use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
-use screamwire_common::types::AudioParams;
+use screamwire::dispatch_vad;
+use screamwire::vad::{DynamicVad, FullSimd, Stride1024, Vad, VadConfig, VadDisabled};
 
-/// Silence packet
-fn silent_packet(_bits: u32) -> Vec<u8> {
-    vec![0u8; AUDIO_PAYLOAD_SIZE]
-}
+use screamwire_common::test_utils::generate_buffer;
 
-/// Loud packet
-fn loud_packet(bits: u32, channels: u32, peak: u16) -> Vec<u8> {
-    let sample_bytes = (bits / 8) as usize;
-    let _frame_bytes = sample_bytes * channels as usize;
-    let mut data = vec![0u8; AUDIO_PAYLOAD_SIZE];
+const BUFFER_SIZE: usize = 4096;
 
-    // Put the peak in the very first sample (leftmost channel, frame 0)
-    match bits {
-        16 => {
-            let s = peak as i16;
-            data[..2].copy_from_slice(&s.to_le_bytes());
-        }
-        24 => {
-            let raw = (peak as u32) & 0x00FF_FFFF;
-            let bytes = raw.to_le_bytes();
-            data[..3].copy_from_slice(&bytes[..3]);
-        }
-        32 => {
-            let s = peak as i32;
-            let bytes = s.to_le_bytes();
-            data[..4].copy_from_slice(&bytes);
-        }
-        _ => panic!("unsupported bits"),
+/// Create a default `VadConfig` with a given silence limit in bytes.
+fn make_vad_config(max_silence_bytes: usize) -> VadConfig {
+    VadConfig {
+        enabled: true,
+        mode:  String::from(""),
+        threshold: 1, // unused
+        max_silence_bytes,
     }
-    data
 }
 
-/// Make VAD with provided config
-fn make_vad(bits: u32, threshold: u16, silence_packets: u32) -> Vad {
-    let format = AudioParams {
-        rate: 48000,
-        bits,
-        channels: 2,
-    };
-    let config = VadConfig {
-        threshold,
-        silence_packets,
-        active_sleep_ms: 4,
-        idle_sleep_ms: 30,
-    };
-    Vad::new(config, format)
+// ---------------------------------------------------------------------------
+// VadDisabled tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn disabled_vad_passes_always_when_active() {
+    let mut vad = VadDisabled::new(make_vad_config(0));
+    let buf = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    assert!(vad.process(&buf));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
 }
 
 #[test]
-fn test_silence_detected_16bit() {
-    let mut vad = make_vad(16, 1, 2);
-    let pkt = silent_packet(16);
+fn disabled_vad_reacts_to_stream_state() {
+    let mut vad = VadDisabled::new(make_vad_config(0));
+    let buf = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    vad.force_idle();
+    assert!(!vad.process(&buf));
+    vad.reset();
+    assert!(vad.process(&buf));
+}
 
-    // First silent packet – still active
-    let (send, _) = vad.process(&pkt);
-    assert!(send, "Still active after one silent packet");
+// ---------------------------------------------------------------------------
+// Full SIMD (bit‑perfect) tests
+// ---------------------------------------------------------------------------
 
-    // Second silent packet – should trigger pause
-    let (send, _) = vad.process(&pkt);
-    assert!(!send, "Should pause after two silent packets");
+#[test]
+fn fullsimd_detects_signal() {
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(8192));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
 }
 
 #[test]
-fn test_signal_detected_16bit() {
-    let mut vad = make_vad(16, 1, 2);
-    let loud = loud_packet(16, 2, 100);
-
-    // Should detect signal immediately
-    let (send, _) = vad.process(&loud);
-    assert!(send, "Signal detected, should send");
+fn fullsimd_goes_idle_on_silence() {
+    // With max_silence_bytes = 8000, two 4096‑byte silent buffers exceed the limit.
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(8000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    assert!(vad.process(&silence)); // 4096 bytes – still active
+    assert!(!vad.process(&silence)); // 8192 bytes – idle triggered
 }
 
 #[test]
-fn test_signal_detected_24bit() {
-    let mut vad = make_vad(24, 1, 2);
-    let loud = loud_packet(24, 2, 100);
+fn fullsimd_resumes_on_signal() {
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(8000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    // Drive into idle state
+    while vad.process(&silence) {}
+    assert!(!vad.process(&silence));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
+}
 
-    let (send, _) = vad.process(&loud);
-    assert!(send, "24‑bit signal detected");
+// ---------------------------------------------------------------------------
+// Quick strided (probabilistic) tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn quick_detects_signal() {
+    let mut vad = Vad::<Stride1024>::new(make_vad_config(8192));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
 }
 
 #[test]
-fn test_signal_detected_32bit() {
-    let mut vad = make_vad(32, 1, 2);
-    let loud = loud_packet(32, 2, 100);
-
-    let (send, _) = vad.process(&loud);
-    assert!(send, "32‑bit signal detected");
+fn quick_goes_idle_on_silence() {
+    let mut vad = Vad::<Stride1024>::new(make_vad_config(8000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    assert!(vad.process(&silence));
+    assert!(!vad.process(&silence));
 }
 
 #[test]
-fn test_resume_after_silence() {
-    let mut vad = make_vad(16, 10, 2);
-    let silent = silent_packet(16);
-    let loud = loud_packet(16, 2, 200);
+fn quick_resumes_on_signal() {
+    let mut vad = Vad::<Stride1024>::new(make_vad_config(8000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    while vad.process(&silence) {}
+    assert!(!vad.process(&silence));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
+}
 
-    // Feed two silent packets to pause
-    vad.process(&silent);
-    let (send, _) = vad.process(&silent);
-    assert!(!send, "Paused after two silent packets");
+// ---------------------------------------------------------------------------
+// State machine edge‑case tests (using FullSimd as representative)
+// ---------------------------------------------------------------------------
 
-    // Feed a loud packet to resume
-    let (send, _) = vad.process(&loud);
-    assert!(send, "Resumed after loud packet");
+#[test]
+fn reset_clears_silence_counter() {
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(8000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    vad.process(&silence); // 4096
+    vad.process(&silence); // 8192 – would trigger idle, but we reset before that
+    vad.reset();
+    assert!(vad.process(&silence)); // counter restarted, still active
+    assert!(!vad.process(&silence)); // now exceeded after reset
 }
 
 #[test]
-fn test_counter_reset_on_signal() {
-    let mut vad = make_vad(16, 10, 5);
-    let silent = silent_packet(16);
-    let loud = loud_packet(16, 2, 200);
+fn force_idle_mutes_output() {
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(99999));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    assert!(vad.process(&loud));
+    vad.force_idle();
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    assert!(!vad.process(&silence));
+}
 
-    // One silent, then a loud – counter should reset
-    vad.process(&silent);
+#[test]
+fn signal_resets_silence_counter() {
+    let mut vad = Vad::<FullSimd>::new(make_vad_config(10000));
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    // Accumulate silence below the limit
+    vad.process(&silence); // 4096
+    vad.process(&silence); // 8192 (< 10000)
+    // Inject a signal – counter must reset
     vad.process(&loud);
-
-    // Now three more silents should not yet trigger pause
-    for _ in 0..3 {
-        let (send, _) = vad.process(&silent);
-        assert!(send, "Still active, silence count reset");
-    }
+    // Now three more silence buffers should trigger idle at 3*4096 = 12288 > 10000
+    assert!(vad.process(&silence)); // 4096
+    assert!(vad.process(&silence)); // 8192
+    assert!(!vad.process(&silence)); // 12288 → idle
 }
 
 #[test]
-fn test_vad_disabled_with_zero_threshold() {
-    let mut vad = make_vad(16, 0, 2); // threshold 0 disables VAD
-    let silent = silent_packet(16);
+fn disabled_vad_ignores_packets() {
+    let mut vad = Vad::<FullSimd>::new(VadConfig {
+        enabled: false,
+        mode: String::from(""),
+        threshold: 0,
+        max_silence_bytes: 0,
+    });
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+    assert!(vad.process(&silence));
+}
 
-    // Should always send, no matter how many silent packets
-    for _ in 0..10 {
-        let (send, _) = vad.process(&silent);
-        assert!(send, "VAD disabled, always send");
-    }
+// ---------------------------------------------------------------------------
+// DynamicVad dispatch test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dynamic_vad_dispatch_works() {
+    let config = make_vad_config(8000);
+    let mut dyn_vad = DynamicVad::FullSimd(Vad::<FullSimd>::new(config));
+    let loud = generate_buffer(BUFFER_SIZE, 16, 2, false, 200);
+    let silence = generate_buffer(BUFFER_SIZE, 16, 2, true, 0);
+
+    // Use the dispatch_vad! macro
+    assert!(dispatch_vad!(&mut dyn_vad, |v| v.process(&loud)));
+    dispatch_vad!(&mut dyn_vad, |v| v.force_idle());
+    assert!(!dispatch_vad!(&mut dyn_vad, |v| v.process(&silence)));
 }

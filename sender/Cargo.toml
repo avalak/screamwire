@@ -3,6 +3,11 @@ name = "screamwire"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+rt-info = []
+rt-debug = ["rt-info"]
+
 [[bin]]
 name = "screamwire-sender"
 path = "src/main.rs"
@@ -16,10 +21,12 @@ ringbuf = "0.5"
 toml = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
+nix = { version = "0.31.3", features = ["event"] }
 env_logger = "0.11"
 
 [dev-dependencies]
 criterion = "0.8.2"
+screamwire-common = { path = "../common", features = ["test-utils"] }
 
 [[bench]]
 name = "extract_benchmark"
@@ -27,4 +34,8 @@ harness = false
 
 [[bench]]
 name = "vad_benchmark"
+harness = false
+
+[[bench]]
+name = "scanner_benchmark"
 harness = false

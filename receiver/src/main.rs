@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             // Ring buffer
-            let buffer_size = PACKET_SIZE * cli.buffer_size as usize;
+            let buffer_size = AUDIO_PAYLOAD_SIZE * cli.buffer_size as usize;
             let rb = HeapRb::<u8>::new(buffer_size);
             let (mut producer, consumer) = rb.split();
             let _ = producer.push_slice(&initial_payload);

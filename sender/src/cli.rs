@@ -40,31 +40,23 @@ pub struct Cli {
     #[arg(long)]
     pub channels: Option<u32>,
 
-    /// VAD amplitude threshold (0 = disabled, 1 = wake on any non‑zero sample)
+    /// Enable Voice Activity Detection (default: true)
     #[arg(long)]
-    pub vad_threshold: Option<u16>,
+    pub vad_enable: Option<bool>,
 
-    /// Consecutive silent packets before pausing transmission (0 = disabled)
+    /// VAD mode: off, quick-1024, full-simd
     #[arg(long)]
-    pub silence_packets: Option<u32>,
+    pub vad_mode: Option<String>,
 
-    /// Ring buffer size in packets (default: 10)
+    /// Silence duration in seconds before pausing transmission (default: 1.0)
     #[arg(long)]
-    pub ring_buffer_packets: Option<usize>,
-
-    /// Sleep duration in ms while actively transmitting (default: 4)
-    #[arg(long)]
-    pub active_sleep_ms: Option<u64>,
-
-    /// Sleep duration in ms when VAD has paused transmission (default: 30)
-    #[arg(long)]
-    pub idle_sleep_ms: Option<u64>,
+    pub vad_silence: Option<f64>,
 
     /// Name of an existing sink to capture from (instead of creating a virtual sink)
     #[arg(long)]
     pub sink: Option<String>,
 
-    /// list all sinks
+    /// List all available sinks and exit
     #[arg(long)]
     pub list_sinks: bool,
 

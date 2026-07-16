@@ -1,103 +1,80 @@
 use screamwire_common::scream::{channel_map, make_header, parse_header};
 use screamwire_common::types::AudioParams;
 
-#[test]
-fn test_standard_header() {
-    let format = AudioParams {
-        rate: 48000,
-        bits: 16,
-        channels: 2,
+/// Helpers
+
+/// Test `make_header`` function
+macro_rules! test_make_header {
+    ($($name:ident: rate=$rate:expr, bits=$bits:expr, channels=$channels:expr => $expected:expr;)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let format = AudioParams {
+                    rate: $rate,
+                    bits: $bits,
+                    channels: $channels,
+                };
+                let header = make_header(format);
+                assert_eq!(
+                    header,
+                    $expected,
+                    "Failed header generation for rate={}, bits={}, channels={}",
+                    $rate, $bits, $channels
+                );
+            }
+        )*
     };
-    let header = make_header(format);
-    assert_eq!(header, [0x01, 0x10, 0x02, 0x03, 0x00]);
 }
 
-#[test]
-fn test_44100_stereo() {
-    let format = AudioParams {
-        rate: 44100,
-        bits: 16,
-        channels: 2,
+/// Test `parse_header` function
+macro_rules! test_parse_header {
+    ($($name:ident: rate=$rate:expr, bits=$bits:expr, channels=$channels:expr;)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let header = make_header(AudioParams {
+                    rate: $rate,
+                    bits: $bits,
+                    channels: $channels,
+                });
+                let params = parse_header(&header).unwrap_or_else(|| {
+                    panic!(
+                        "Failed to parse header with params [rate: {}, bits: {}, channels: {}]",
+                        $rate, $bits, $channels
+                    )
+                });
+
+                assert_eq!(params.rate, $rate);
+                assert_eq!(params.bits, $bits);
+                assert_eq!(params.channels, $channels);
+            }
+        )*
     };
-    let header = make_header(format);
-    assert_eq!(header, [0x81, 0x10, 0x02, 0x03, 0x00]);
 }
 
-#[test]
-fn test_96000_stereo() {
-    let format = AudioParams {
-        rate: 96000,
-        bits: 16,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x02, 0x10, 0x02, 0x03, 0x00]);
+// Tests
+
+// make_header tests
+test_make_header! {
+    test_standard_header: rate=48000,  bits=16, channels=2 => [0x01, 0x10, 0x02, 0x03, 0x00];
+    test_44100_stereo:    rate=44100,  bits=16, channels=2 => [0x81, 0x10, 0x02, 0x03, 0x00];
+    test_96000_stereo:    rate=96000,  bits=16, channels=2 => [0x02, 0x10, 0x02, 0x03, 0x00];
+    test_88200_stereo:    rate=88200,  bits=16, channels=2 => [0x82, 0x10, 0x02, 0x03, 0x00];
+    test_192000_stereo:   rate=192000, bits=16, channels=2 => [0x04, 0x10, 0x02, 0x03, 0x00];
+    test_176400_stereo:   rate=176400, bits=16, channels=2 => [0x84, 0x10, 0x02, 0x03, 0x00];
+    test_48000_mono:      rate=48000,  bits=16, channels=1 => [0x01, 0x10, 0x01, 0x01, 0x00];
+    test_44100_24bit:     rate=44100,  bits=24, channels=2 => [0x81, 0x18, 0x02, 0x03, 0x00];
+    test_48000_32bit:     rate=48000,  bits=32, channels=2 => [0x01, 0x20, 0x02, 0x03, 0x00];
+    test_channel_map_6ch_in_header:     rate=48000,  bits=16, channels=6 => [0x01, 0x10, 0x06, 0x0F, 0x06];
 }
 
-#[test]
-fn test_88200_stereo() {
-    let format = AudioParams {
-        rate: 88200,
-        bits: 16,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x82, 0x10, 0x02, 0x03, 0x00]);
-}
-
-#[test]
-fn test_192000_stereo() {
-    let format = AudioParams {
-        rate: 192000,
-        bits: 16,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x04, 0x10, 0x02, 0x03, 0x00]);
-}
-
-#[test]
-fn test_176400_stereo() {
-    let format = AudioParams {
-        rate: 176400,
-        bits: 16,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x84, 0x10, 0x02, 0x03, 0x00]);
-}
-
-#[test]
-fn test_48000_mono() {
-    let format = AudioParams {
-        rate: 48000,
-        bits: 16,
-        channels: 1,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x01, 0x10, 0x01, 0x01, 0x00]);
-}
-
-#[test]
-fn test_44100_24bit() {
-    let format = AudioParams {
-        rate: 44100,
-        bits: 24,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x81, 0x18, 0x02, 0x03, 0x00]);
-}
-
-#[test]
-fn test_48000_32bit() {
-    let format = AudioParams {
-        rate: 48000,
-        bits: 32,
-        channels: 2,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x01, 0x20, 0x02, 0x03, 0x00]);
+// parse_header tests
+test_parse_header! {
+    test_parse_16bit:        rate=48000, bits=24, channels=2;
+    test_parse_24bit:        rate=48000, bits=24, channels=2;
+    test_parse_32bit:        rate=48000, bits=32, channels=2;
+    test_parse_stereo_44_1k: rate=44100, bits=16, channels=2;
+    test_parse_hi_res_192k:  rate=192000,bits=24, channels=2;
 }
 
 #[test]
@@ -131,17 +108,6 @@ fn test_channel_map_custom() {
 }
 
 #[test]
-fn test_channel_map_6ch_in_header() {
-    let format = AudioParams {
-        rate: 48000,
-        bits: 16,
-        channels: 6,
-    };
-    let header = make_header(format);
-    assert_eq!(header, [0x01, 0x10, 0x06, 0x0F, 0x06]);
-}
-
-#[test]
 fn test_frame_bytes() {
     let format = AudioParams {
         rate: 48000,
@@ -161,45 +127,4 @@ fn test_frame_bytes() {
         channels: 1,
     };
     assert_eq!(format.frame_bytes(), 4);
-}
-
-// parse_header
-
-#[test]
-fn test_parse_standard() {
-    let header = make_header(AudioParams {
-        rate: 48000,
-        bits: 16,
-        channels: 2,
-    });
-    let params = parse_header(&header).expect("Failed to parse standard header");
-    assert_eq!(params.rate, 48000);
-    assert_eq!(params.bits, 16);
-    assert_eq!(params.channels, 2);
-}
-
-#[test]
-fn test_parse_44100_stereo() {
-    let header = make_header(AudioParams {
-        rate: 44100,
-        bits: 16,
-        channels: 2,
-    });
-    let params = parse_header(&header).expect("Failed to parse 44.1kHz header");
-    assert_eq!(params.rate, 44100);
-    assert_eq!(params.bits, 16);
-    assert_eq!(params.channels, 2);
-}
-
-#[test]
-fn test_parse_24bit() {
-    let header = make_header(AudioParams {
-        rate: 48000,
-        bits: 24,
-        channels: 2,
-    });
-    let params = parse_header(&header).expect("Failed to parse 24-bit header");
-    assert_eq!(params.rate, 48000);
-    assert_eq!(params.bits, 24);
-    assert_eq!(params.channels, 2);
 }

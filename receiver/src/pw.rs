@@ -32,7 +32,8 @@ pub fn run_playback_stream(
         *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
         *pipewire::keys::NODE_AUTOCONNECT => "true",
         *pipewire::keys::TARGET_OBJECT => "default.audio.sink",
-        *pipewire::keys::NODE_LATENCY => format!("{}/{}", 288, format.rate),
+        // TODO: repalce magic with config
+        *pipewire::keys::NODE_LATENCY => format!("{}/{}", 256, format.rate),
     };
 
     let stream = StreamRc::new(core, "screamwire-receiver", props)?;

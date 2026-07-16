@@ -1,73 +1,45 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use screamwire::vad::{Vad, VadConfig};
-use screamwire_common::scream::AUDIO_PAYLOAD_SIZE;
-use screamwire_common::types::AudioParams;
+use screamwire::vad::{FullSimd, ScanStrategy, Stride1024, Vad, VadConfig};
+
 use std::hint::black_box;
 
-fn generate_packet(bits: u32, channels: u32, peak_amplitude: u16) -> Vec<u8> {
-    let sample_bytes = (bits / 8) as usize;
-    let frame_bytes = sample_bytes * channels as usize;
-    let num_frames = AUDIO_PAYLOAD_SIZE / frame_bytes;
-    let mut data = vec![0u8; AUDIO_PAYLOAD_SIZE];
+use screamwire_common::test_utils::{BUFFER_SIZE, generate_buffer};
 
-    for frame in 0..num_frames {
-        let frame_offset = frame * frame_bytes;
-        for ch in 0..channels {
-            let offset = frame_offset + ch as usize * sample_bytes;
-            let sample_val = if ch == 0 && frame % 100 == 0 {
-                peak_amplitude as i32
-            } else {
-                0
-            };
-            match bits {
-                8 => {
-                    let s = sample_val as i8;
-                    data[offset] = s as u8;
-                }
-                16 => {
-                    let s = sample_val as i16;
-                    data[offset..offset + 2].copy_from_slice(&s.to_le_bytes());
-                }
-                24 => {
-                    let bytes = (sample_val as u32 & 0x00FF_FFFF).to_le_bytes();
-                    data[offset..offset + 3].copy_from_slice(&bytes[..3]);
-                }
-                32 => {
-                    let bytes = sample_val.to_le_bytes();
-                    data[offset..offset + 4].copy_from_slice(&bytes);
-                }
-                _ => panic!("unsupported bits"),
-            }
-        }
-    }
-    data
-}
-
-fn bench_vad(c: &mut Criterion, bits: u32) {
-    let format = AudioParams {
-        rate: 48000,
-        bits,
-        channels: 2,
-    };
+fn bench_vad_variants<D: ScanStrategy>(c: &mut Criterion) {
+    let bits = 16;
     let config = VadConfig {
+        enabled: true,
+        mode: String::from(""),
         threshold: 100,
-        silence_packets: 167,
-        active_sleep_ms: 4,
-        idle_sleep_ms: 30,
+        max_silence_bytes: 384_000,
     };
-    let data = generate_packet(bits, 2, 200);
-    let mut vad = Vad::new(config, format);
 
-    c.bench_function(&format!("vad_{}bit", bits), |b| {
-        b.iter(|| vad.process(black_box(&data)))
+    let active_data = generate_buffer(BUFFER_SIZE, bits, 2, false, 200);
+    let silent_data = generate_buffer(BUFFER_SIZE, bits, 2, true, 0);
+
+    // Active signal - state is mutated across iterations.
+    let active_id = format!("vad_{}_{}bit_active_signal", D::NAME, bits);
+    c.bench_function(&active_id, |b| {
+        let mut vad = Vad::<D>::new(config.clone());
+        b.iter(|| {
+            black_box(&mut vad).process(black_box(&active_data));
+        })
+    });
+
+    // Pure silence - a fresh VAD is created for each iteration so the
+    // benchmark covers scanning, silence counting and state transitions.
+    let silence_id = format!("vad_{}_{}bit_pure_silence", D::NAME, bits);
+    c.bench_function(&silence_id, |b| {
+        b.iter(|| {
+            let mut vad = Vad::<D>::new(config.clone());
+            black_box(&mut vad).process(black_box(&silent_data));
+        })
     });
 }
 
 fn benchmarks(c: &mut Criterion) {
-    bench_vad(c, 8);
-    bench_vad(c, 16);
-    bench_vad(c, 24);
-    bench_vad(c, 32);
+    bench_vad_variants::<Stride1024>(c);
+    bench_vad_variants::<FullSimd>(c);
 }
 
 criterion_group!(benches, benchmarks);

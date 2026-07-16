@@ -3,6 +3,8 @@ use screamwire_common::types::{DEFAULT_BITS, DEFAULT_CHANNELS, DEFAULT_RATE};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub const BASE_BUFFER_SIZE: usize = 8192;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     // Network
@@ -23,22 +25,18 @@ pub struct Config {
     pub channels: u32,
 
     // VAD (Voice Activity Detection)
+    #[serde(default = "default_vad_enable")]
+    pub vad_enable: bool,
+
+    #[serde(default = "default_vad_mode")]
+    pub vad_mode: String,
+
     #[serde(default = "default_vad_threshold")]
     pub vad_threshold: u16,
 
-    #[serde(default = "default_silence_packets")]
-    pub silence_packets: u32,
-
-    // Ring buffer
-    #[serde(default = "default_ring_buffer_packets")]
-    pub ring_buffer_packets: usize,
-
-    // Sleep intervals (milliseconds)
-    #[serde(default = "default_active_sleep_ms")]
-    pub active_sleep_ms: u64,
-
-    #[serde(default = "default_idle_sleep_ms")]
-    pub idle_sleep_ms: u64,
+    /// Silence duration in seconds before pausing transmission.
+    #[serde(default = "default_vad_silence")]
+    pub vad_silence: f64,
 
     // Existing sink capture (optional)
     #[serde(default)]
@@ -61,30 +59,20 @@ fn default_channels() -> u32 {
     DEFAULT_CHANNELS
 }
 
+fn default_vad_enable() -> bool {
+    true
+}
+
+fn default_vad_mode() -> String {
+    "quick".to_string()
+}
+
 fn default_vad_threshold() -> u16 {
-    // 0 = VAD disabled, continuous transmission.
-    // 1 = wake on any non‑zero sample (complete digital silence is 0).
-    // Increase to ignore low-level background noise (e.g., 50-200).
     1
 }
 
-fn default_silence_packets() -> u32 {
-    // 1 second of silence = ceil(RATE / (AUDIO_PAYLOAD_SIZE / frame_bytes))
-    // frame_bytes = (bits/8)*channels. For 16-bit stereo = 4.
-    // 48000 / (1152 / 4) = 48000 / 288 = 166.67 -> 167 packets
-    167
-}
-
-fn default_ring_buffer_packets() -> usize {
-    10
-}
-
-fn default_active_sleep_ms() -> u64 {
-    4
-}
-
-fn default_idle_sleep_ms() -> u64 {
-    30
+fn default_vad_silence() -> f64 {
+    1.0
 }
 
 /// Return the default configuration file path (`$XDG_CONFIG_HOME/screamwire/config.toml`
@@ -122,11 +110,10 @@ impl Config {
                 rate: default_rate(),
                 bits: default_bits(),
                 channels: default_channels(),
+                vad_enable: default_vad_enable(),
+                vad_mode: default_vad_mode(),
                 vad_threshold: default_vad_threshold(),
-                silence_packets: default_silence_packets(),
-                ring_buffer_packets: default_ring_buffer_packets(),
-                active_sleep_ms: default_active_sleep_ms(),
-                idle_sleep_ms: default_idle_sleep_ms(),
+                vad_silence: default_vad_silence(),
                 sink_name: None,
             })
         }
@@ -149,20 +136,11 @@ impl Config {
         if let Some(ch) = cli.channels {
             self.channels = ch;
         }
-        if let Some(vad) = cli.vad_threshold {
-            self.vad_threshold = vad;
+        if let Some(enable) = cli.vad_enable {
+            self.vad_enable = enable;
         }
-        if let Some(sp) = cli.silence_packets {
-            self.silence_packets = sp;
-        }
-        if let Some(rbp) = cli.ring_buffer_packets {
-            self.ring_buffer_packets = rbp;
-        }
-        if let Some(active) = cli.active_sleep_ms {
-            self.active_sleep_ms = active;
-        }
-        if let Some(idle) = cli.idle_sleep_ms {
-            self.idle_sleep_ms = idle;
+        if let Some(ref mode) = cli.vad_mode {
+            self.vad_mode = mode.clone();
         }
         if let Some(ref sink) = cli.sink {
             self.sink_name = Some(sink.clone());
@@ -194,11 +172,10 @@ impl Config {
             rate: default_rate(),
             bits: default_bits(),
             channels: default_channels(),
+            vad_enable: default_vad_enable(),
+            vad_mode: default_vad_mode(),
             vad_threshold: default_vad_threshold(),
-            silence_packets: default_silence_packets(),
-            ring_buffer_packets: default_ring_buffer_packets(),
-            active_sleep_ms: default_active_sleep_ms(),
-            idle_sleep_ms: default_idle_sleep_ms(),
+            vad_silence: default_vad_silence(),
             sink_name: None,
         }
     }

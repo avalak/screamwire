@@ -1,28 +1,116 @@
-use screamwire_common::pw::make_format_data;
-use screamwire_common::types::AudioParams;
+use crate::dispatch_vad;
+use crate::event_bridge::StreamEventBridge;
+use crate::rt_debug;
 
-#[allow(unused_imports)]
-use log::{debug, info};
+use crate::vad::{DynamicVad, VadConfig};
+use log::{error, info};
 use pipewire::{
     context::ContextRc,
-    init,
     main_loop::MainLoopRc,
-    properties::properties,
+    properties::PropertiesBox,
     spa,
     stream::{StreamFlags, StreamRc},
     types::ObjectType,
 };
 use ringbuf::traits::Producer;
+use screamwire_common::pw::make_format_data;
+use screamwire_common::types::AudioParams;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Clone)]
+struct StreamStateFlags {
+    reset: Arc<AtomicBool>,
+    idle: Arc<AtomicBool>,
+}
+
+impl StreamStateFlags {
+    fn new() -> Self {
+        Self {
+            reset: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[inline(always)]
+    fn request_reset(&self) {
+        self.idle.store(false, Ordering::Release);
+        self.reset.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    fn request_idle(&self) {
+        self.reset.store(false, Ordering::Release);
+        self.idle.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    fn take_reset(&self) -> bool {
+        self.reset.swap(false, Ordering::Acquire)
+    }
+
+    #[inline(always)]
+    fn take_idle(&self) -> bool {
+        self.idle.swap(false, Ordering::Acquire)
+    }
+}
+
+/// Build stream properties, flags and a human-readable description.
+/// Properties are grouped hierarchically by operational priority and impact.
+#[inline]
+fn make_stream_config(
+    format: AudioParams,
+    sink_name: Option<&str>,
+) -> (PropertiesBox, StreamFlags, String) {
+    let mut props = PropertiesBox::new();
+
+    // Common properties
+    props.insert(*pipewire::keys::NODE_ALWAYS_PROCESS, "false");
+    props.insert(*pipewire::keys::APP_NAME, "ScreamWire");
+    props.insert(*pipewire::keys::APP_ID, "io.github.avalak.screamwire");
+    props.insert(*pipewire::keys::MEDIA_SOFTWARE, "ScreamWire");
+    props.insert(*pipewire::keys::NODE_DESCRIPTION, "ScreamWire Sender");
+    props.insert(*pipewire::keys::MEDIA_TYPE, "Audio");
+    props.insert(*pipewire::keys::MEDIA_ROLE, "Production");
+    props.insert(
+        *pipewire::keys::NODE_LATENCY,
+        format!("{}/{}", 256, format.rate),
+    ); // TODO: replace magic number with config
+
+    if let Some(name) = sink_name {
+        // Capture from an existing sink
+        props.insert(*pipewire::keys::MEDIA_CATEGORY, "Manager");
+        props.insert(*pipewire::keys::STREAM_CAPTURE_SINK, "true");
+        props.insert(*pipewire::keys::TARGET_OBJECT, name); // feature `v0_3_44` required
+        props.insert(*pipewire::keys::CLIENT_NAME, "ScreamWire");
+        props.insert(*pipewire::keys::MEDIA_NAME, "Capture audio");
+        props.insert(*pipewire::keys::APP_ICON_NAME, "audio-speakers");
+
+        (
+            props,
+            StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS | StreamFlags::AUTOCONNECT,
+            format!("capture from '{}'", name),
+        )
+    } else {
+        // Create a virtual sink
+        props.insert(*pipewire::keys::MEDIA_CATEGORY, "Playback");
+        props.insert(*pipewire::keys::NODE_NAME, "ScreamWire");
+        props.insert(*pipewire::keys::MEDIA_CLASS, "Audio/Sink");
+        props.insert(*pipewire::keys::NODE_VIRTUAL, "true");
+
+        (
+            props,
+            StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS | StreamFlags::AUTOCONNECT,
+            "virtual sink 'ScreamWire'".to_string(),
+        )
+    }
+}
 
 /// Return a list of all `node.name` values for PipeWire nodes with
 /// `media.class = "Audio/Sink"`.
-pub fn get_sink_names() -> Vec<String> {
-    init();
-
-    let mainloop = MainLoopRc::new(None).expect("Failed to create main loop");
-    let context = ContextRc::new(&mainloop, None).expect("Failed to create context");
+pub fn get_sink_names(mainloop: MainLoopRc, context: ContextRc) -> Vec<String> {
     let core = context.connect_rc(None).expect("Failed to connect to core");
     let registry = core.get_registry().expect("Failed to get registry");
 
@@ -69,91 +157,103 @@ pub fn get_sink_names() -> Vec<String> {
 /// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
 pub fn run_audio_stream(
+    mainloop: MainLoopRc,
+    context: ContextRc,
     mut producer: impl Producer<Item = u8> + Send + 'static,
     format: AudioParams,
     target_sink: Option<String>,
+    vad_config: VadConfig,
+    event_bridge: StreamEventBridge,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    init();
-
-    let mainloop = MainLoopRc::new(None)?;
-    let context = ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
 
     // SPA format pod
     let pod_data = make_format_data(format);
-    let pod = pipewire::spa::pod::Pod::from_bytes(&pod_data).unwrap();
+    let pod = spa::pod::Pod::from_bytes(&pod_data).unwrap();
     let mut params = [pod];
 
     // Configure properties and flags based on mode
-    let (props, flags, log_desc) = if let Some(ref sink_name) = target_sink {
-        info!("Capture mode: using monitor of sink '{}'", sink_name);
-        (
-            properties! {
-                *pipewire::keys::CLIENT_NAME => "ScreamWire",
-                *pipewire::keys::MEDIA_NAME => "Capture audio",
-                *pipewire::keys::MEDIA_TYPE => "Audio",
-                *pipewire::keys::MEDIA_CATEGORY => "Manager", //"Capture",
-                *pipewire::keys::MEDIA_ROLE => "Production",
-                *pipewire::keys::STREAM_CAPTURE_SINK => "true",
-                *pipewire::keys::TARGET_OBJECT => sink_name.as_str(),
-                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Sender",
-                *pipewire::keys::APP_ICON_NAME => "audio-speakers",
-                *pipewire::keys::APP_NAME => "ScreamWire",
-                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
-                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
-            },
-            StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-            format!("capture from '{}'", sink_name),
-        )
-    } else {
-        info!("Virtual mode: creating 'ScreamWire' output device");
-        (
-            properties! {
-                *pipewire::keys::MEDIA_TYPE => "Audio",
-                *pipewire::keys::MEDIA_CATEGORY => "Playback",
-                *pipewire::keys::MEDIA_ROLE => "Production",
-                *pipewire::keys::NODE_NAME => "ScreamWire",
-                *pipewire::keys::NODE_DESCRIPTION => "ScreamWire Remote Output",
-                *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
-                *pipewire::keys::NODE_VIRTUAL => "true",
+    let (props, flags, log_desc) = make_stream_config(format, target_sink.as_deref());
+    let _log_desc_for_closure = log_desc.clone();
 
-                *pipewire::keys::APP_NAME => "ScreamWire",
-                *pipewire::keys::APP_ID => "io.github.avalak.screamwire",
-                *pipewire::keys::MEDIA_SOFTWARE => "ScreamWire",
-            },
-            StreamFlags::MAP_BUFFERS,
-            "virtual sink 'ScreamWire'".to_string(),
-        )
+    // Monomorphize VAD
+    let mut vad = DynamicVad::from_config(vad_config);
+
+    // Stream logic
+    let state_flags = StreamStateFlags::new();
+    let process_flags = state_flags.clone();
+
+    // Stream
+    let stream = match StreamRc::new(core.clone(), "screamwire-stream", props) {
+        Ok(s) => s,
+        Err(e) => {
+            info!("Failed to create stream: {}", e);
+            return Err(e.into());
+        }
     };
-
-    let stream = StreamRc::new(core.clone(), "screamwire-stream", props)?;
-    let log_desc_for_closure = log_desc.clone();
-    let _listener = stream
+    let listener = stream
         .add_local_listener::<()>()
         .process(move |s, _| {
-            if let Some(mut buf) = s.dequeue_buffer() {
-                let datas = buf.datas_mut();
-                if let Some(data) = datas.first_mut() {
-                    let chunk = data.chunk();
-                    let off = chunk.offset() as usize;
-                    let sz = chunk.size() as usize;
-                    if let Some(bytes) = data.data() {
-                        let _ = producer.push_slice(&bytes[off..off + sz]);
-                    }
+            if process_flags.take_idle() {
+                dispatch_vad!(&mut vad, |v| v.force_idle());
+                event_bridge.notify_flush();
+            }
+            if process_flags.take_reset() {
+                dispatch_vad!(&mut vad, |v| v.reset());
+            }
+
+            let mut should_notify = false;
+            while let Some(mut buf) = s.dequeue_buffer() {
+                let Some(data) = buf.datas_mut().first_mut() else {
+                    continue;
+                };
+                let off = data.chunk().offset() as usize;
+                let sz = data.chunk().size() as usize;
+                let Some(bytes) = data.data() else { continue };
+                // Bufer from PipeWire. Should be safe
+                let raw_audio = &bytes[off..off + sz];
+
+                // Monomorphized call
+                let is_active = dispatch_vad!(&mut vad, |v| v.process(raw_audio));
+                if is_active {
+                    producer.push_slice(raw_audio);
+                    should_notify = true;
                 }
+            }
+            if should_notify {
+                event_bridge.notify_data_ready();
             }
         })
         .state_changed(move |_stream, _user_data, _old, new| {
-            if new == pipewire::stream::StreamState::Streaming {
-                debug!("Stream started ({})", log_desc_for_closure);
+            rt_debug!(
+                "Stream state: {:?} -> {:?} ({})",
+                _old,
+                new,
+                _log_desc_for_closure
+            );
+            match new {
+                pipewire::stream::StreamState::Streaming => {
+                    state_flags.request_reset();
+                }
+                pipewire::stream::StreamState::Paused
+                | pipewire::stream::StreamState::Unconnected => {
+                    state_flags.request_idle();
+                }
+                pipewire::stream::StreamState::Error(_) => {
+                    error!("Stream error");
+                }
+                _ => {}
             }
         })
         .register()?;
 
     stream.connect(spa::utils::Direction::Input, None, flags, &mut params[..])?;
 
-    info!("Initialized: {}", log_desc);
+    info!("Initialized and connected audio stream: {}", log_desc);
+
     mainloop.run();
+
+    drop(listener);
 
     Ok(())
 }

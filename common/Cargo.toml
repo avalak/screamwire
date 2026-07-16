@@ -3,6 +3,11 @@ name = "screamwire-common"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[features]
+test-utils = []
 
+[dependencies]
 pipewire = { version = "0.10", features = ["v0_3_44"] }
+log = "0.4"
+nix = { version = "0.31.3", features = ["event"] }
+env_logger = "0.11"
