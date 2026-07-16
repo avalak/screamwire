@@ -1,7 +1,5 @@
 use screamwire::dispatch_vad;
-use screamwire::vad::{
-    DynamicVad, FullSimd, Stride1024, Vad, VadConfig, VadDisabled,
-};
+use screamwire::vad::{DynamicVad, FullSimd, Stride1024, Vad, VadConfig, VadDisabled};
 
 use screamwire_common::test_utils::generate_buffer;
 
@@ -11,6 +9,7 @@ const BUFFER_SIZE: usize = 4096;
 fn make_vad_config(max_silence_bytes: usize) -> VadConfig {
     VadConfig {
         enabled: true,
+        mode:  String::from(""),
         threshold: 1, // unused
         max_silence_bytes,
     }
@@ -144,6 +143,7 @@ fn signal_resets_silence_counter() {
 fn disabled_vad_ignores_packets() {
     let mut vad = Vad::<FullSimd>::new(VadConfig {
         enabled: false,
+        mode: String::from(""),
         threshold: 0,
         max_silence_bytes: 0,
     });

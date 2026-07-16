@@ -881,6 +881,9 @@ dependencies = [
 name = "screamwire-common"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "log",
+ "nix",
  "pipewire",
 ]
 

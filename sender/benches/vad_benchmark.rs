@@ -9,6 +9,7 @@ fn bench_vad_variants<D: ScanStrategy>(c: &mut Criterion) {
     let bits = 16;
     let config = VadConfig {
         enabled: true,
+        mode: String::from(""),
         threshold: 100,
         max_silence_bytes: 384_000,
     };

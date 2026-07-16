@@ -52,8 +52,7 @@ macro_rules! test_parse_header {
     };
 }
 
-/// Tests
-///
+// Tests
 
 // make_header tests
 test_make_header! {
