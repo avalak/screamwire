@@ -2,6 +2,7 @@ name: Build sender (x86_64, armhf)
 
 on:
   push:
+    tags: ['v*']
     branches: [main, master]
     paths:
       - 'sender/**'
@@ -10,6 +11,7 @@ on:
       - 'Cargo.lock'
       - 'Dockerfile.armhf'
       - 'Cross.toml'
+
   pull_request:
     branches: [main, master]
     paths:
@@ -27,7 +29,10 @@ jobs:
   build:
     name: Build sender (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
 
     strategy:
       fail-fast: false
@@ -78,3 +83,17 @@ jobs:
           name: ${{ matrix.artifact }}
           path: target/${{ matrix.target }}/release/screamwire-sender
           if-no-files-found: error
+
+      - name: Stage named release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cp target/${{ matrix.target }}/release/screamwire-sender target/${{ matrix.target }}/release/${{ matrix.artifact }}
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
