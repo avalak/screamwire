@@ -1,5 +1,6 @@
 use crate::dispatch_vad;
 use crate::event_bridge::StreamEventBridge;
+use crate::fade::{Fade, FadeDirection};
 use crate::rt_debug;
 
 use crate::vad::{DynamicVad, VadConfig};
@@ -156,6 +157,9 @@ pub fn get_sink_names(mainloop: MainLoopRc, context: ContextRc) -> Vec<String> {
 ///
 /// * `target_sink = Some(name)` -> capture from the monitor of an existing sink.
 /// * `target_sink = None`       -> create a virtual "ScreamWire" output device.
+///
+/// The `fade_ms` parameter controls the duration of the initial fade‑in
+#[allow(clippy::too_many_arguments)]
 pub fn run_audio_stream(
     mainloop: MainLoopRc,
     context: ContextRc,
@@ -163,6 +167,7 @@ pub fn run_audio_stream(
     format: AudioParams,
     target_sink: Option<String>,
     vad_config: VadConfig,
+    fade_ms: u32,
     event_bridge: StreamEventBridge,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let core = context.connect_rc(None)?;
@@ -174,14 +179,25 @@ pub fn run_audio_stream(
 
     // Configure properties and flags based on mode
     let (props, flags, log_desc) = make_stream_config(format, target_sink.as_deref());
-    let _log_desc_for_closure = log_desc.clone();
+    let log_desc_for_closure = log_desc.clone();
 
     // Monomorphize VAD
     let mut vad = DynamicVad::from_config(vad_config);
 
+    // Fade-in processor (real‑time safe, no allocations)
+    let fade_in = Rc::new(RefCell::new(Fade::new(
+        fade_ms,
+        format.rate,
+        FadeDirection::In,
+    )));
+    let fade_in_clone = fade_in.clone();
+
     // Stream logic
     let state_flags = StreamStateFlags::new();
     let process_flags = state_flags.clone();
+
+    // Track previous VAD state to reset fade on reactivation
+    let mut vad_was_active = false;
 
     // Stream
     let stream = match StreamRc::new(core.clone(), "screamwire-stream", props) {
@@ -196,10 +212,14 @@ pub fn run_audio_stream(
         .process(move |s, _| {
             if process_flags.take_idle() {
                 dispatch_vad!(&mut vad, |v| v.force_idle());
+                vad_was_active = false;
                 event_bridge.notify_flush();
             }
             if process_flags.take_reset() {
                 dispatch_vad!(&mut vad, |v| v.reset());
+                // Restart fade‑in when the stream (re)starts
+                fade_in_clone.borrow_mut().reset();
+                vad_was_active = false;
             }
 
             let mut should_notify = false;
@@ -210,15 +230,24 @@ pub fn run_audio_stream(
                 let off = data.chunk().offset() as usize;
                 let sz = data.chunk().size() as usize;
                 let Some(bytes) = data.data() else { continue };
-                // Bufer from PipeWire. Should be safe
-                let raw_audio = &bytes[off..off + sz];
+                // Buffer from PipeWire. Should be safe
+                let raw_audio = &mut bytes[off..off + sz];
 
                 // Monomorphized call
                 let is_active = dispatch_vad!(&mut vad, |v| v.process(raw_audio));
                 if is_active {
+                    // Reset fade when transitioning from inactive to active
+                    if !vad_was_active {
+                        fade_in_clone.borrow_mut().reset();
+                    }
+                    // Apply fade‑in if still in progress
+                    fade_in_clone
+                        .borrow_mut()
+                        .apply(raw_audio, format.bits, format.channels);
                     producer.push_slice(raw_audio);
                     should_notify = true;
                 }
+                vad_was_active = is_active;
             }
             if should_notify {
                 event_bridge.notify_data_ready();
@@ -229,7 +258,7 @@ pub fn run_audio_stream(
                 "Stream state: {:?} -> {:?} ({})",
                 _old,
                 new,
-                _log_desc_for_closure
+                log_desc_for_closure
             );
             match new {
                 pipewire::stream::StreamState::Streaming => {

@@ -6,6 +6,7 @@ use std::thread;
 mod cli;
 mod config;
 mod event_bridge;
+mod fade;
 mod pw;
 mod rt_log;
 mod scanners;
@@ -28,6 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cfg = config::Config::load(&cli)?;
     cfg.apply_cli_overrides(&cli);
+
+    info!("Fade time: {}ms", cfg.fade_ms);
 
     pipewire::init();
     let mainloop = pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create main loop");
@@ -113,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             Some(name.clone()),
             vad_config,
+            cfg.fade_ms,
             event_bridge,
         )?;
     } else {
@@ -123,6 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             None,
             vad_config,
+            cfg.fade_ms,
             event_bridge,
         )?;
     }

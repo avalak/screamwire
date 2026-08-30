@@ -52,6 +52,10 @@ pub struct Cli {
     #[arg(long)]
     pub vad_silence: Option<f64>,
 
+    /// Fade-in duration in ms (0 disables fade)
+    #[arg(long)]
+    pub fade_ms: Option<u32>,
+
     /// Name of an existing sink to capture from (instead of creating a virtual sink)
     #[arg(long)]
     pub sink: Option<String>,

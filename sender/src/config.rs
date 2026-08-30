@@ -38,6 +38,10 @@ pub struct Config {
     #[serde(default = "default_vad_silence")]
     pub vad_silence: f64,
 
+    /// Fade-in duration in milliseconds.
+    #[serde(default = "default_fade_ms")]
+    pub fade_ms: u32,
+
     // Existing sink capture (optional)
     #[serde(default)]
     pub sink_name: Option<String>,
@@ -73,6 +77,10 @@ fn default_vad_threshold() -> u16 {
 
 fn default_vad_silence() -> f64 {
     1.0
+}
+
+fn default_fade_ms() -> u32 {
+    250
 }
 
 /// Return the default configuration file path (`$XDG_CONFIG_HOME/screamwire/config.toml`
@@ -114,6 +122,7 @@ impl Config {
                 vad_mode: default_vad_mode(),
                 vad_threshold: default_vad_threshold(),
                 vad_silence: default_vad_silence(),
+                fade_ms: default_fade_ms(),
                 sink_name: None,
             })
         }
@@ -141,6 +150,9 @@ impl Config {
         }
         if let Some(ref mode) = cli.vad_mode {
             self.vad_mode = mode.clone();
+        }
+        if let Some(fade) = cli.fade_ms {
+            self.fade_ms = fade;
         }
         if let Some(ref sink) = cli.sink {
             self.sink_name = Some(sink.clone());
@@ -176,6 +188,7 @@ impl Config {
             vad_mode: default_vad_mode(),
             vad_threshold: default_vad_threshold(),
             vad_silence: default_vad_silence(),
+            fade_ms: default_fade_ms(),
             sink_name: None,
         }
     }
